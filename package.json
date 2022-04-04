@@ -1,0 +1,12 @@
+{
+  "dependencies": {
+    "@databases/pg": "^5.4.1",
+    "axios": "^0.26.1",
+    "body-parser": "^1.19.2",
+    "express": "^4.17.3",
+    "ip": "^1.1.5",
+    "jslint": "^0.12.1",
+    "log4js": "6.1.2",
+    "swagger-autogen": "^2.20.8"
+  }
+}

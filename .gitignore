@@ -1,0 +1,11 @@
+logs
+logs/
+node_modules/
+launch.json
+package-lock.json
+.scannerwork
+.idea/
+.nyc_output
+.vscode/
+mochawesome-report/
+case-studies/
