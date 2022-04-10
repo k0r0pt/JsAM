@@ -12,7 +12,6 @@ export class Actor extends ActorRef {
   #behavior;
   #queue;
   status = 'IDLE';
-  #errorHandler;
   #loggingPrefix;
 
   /**
@@ -20,18 +19,16 @@ export class Actor extends ActorRef {
    *
    * @param {ActorSystem} actorSystem The actor system
    * @param {string} name The actor name
-   * @param {Actor} locator The actor locator
+   * @param {string} locator The actor locator
    * @param {string} actorUrl The complete Actor Url
    * @param {string} behaviorDefinition The actor Behavior Definition file
-   * @param {Function} errorHandler The (optional) error handler function
    */
-  constructor(actorSystem, name, locator, actorUrl, behaviorDefinition, errorHandler) {
+  constructor(actorSystem, name, locator, actorUrl, behaviorDefinition) {
     super(actorSystem, name, locator, actorUrl);
     if (name.includes('/')) {
       throw new Error('Actor name cannot have / in it.');
     }
     this.#queue = new Queue(this);
-    this.#errorHandler = errorHandler;
     this.#loggingPrefix = '[' + name + '@' + actorSystem.getClusterManager().getMe().getIdentifier() + ']';
     return this.#resolveBehavior(behaviorDefinition);
   }
@@ -54,16 +51,13 @@ export class Actor extends ActorRef {
         this.status = 'PROCESSING';
         try {
           var msg = this.#queue.dequeue();
-          logger.debug(this.#loggingPrefix, ' Processing message: ', msg.getMessage());
+          logger.isTraceEnabled() && logger.trace(this.#loggingPrefix, ' Processing message: ', msg.getMessage());
           await this.#behavior.process(msg, this);
         } catch (err) {
           logger.error(this.#loggingPrefix, 'Processing failed with error! Continuing to the next message...', err);
-          this.#errorHandler && this.#errorHandler();
         }
         this.status = 'IDLE';
         this.process();
-      } else {
-        this.status = 'IDLE';
       }
     }
   }

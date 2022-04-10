@@ -16,20 +16,24 @@ import { Receptionist } from '../../receptionist/Receptionist.mjs';
 
 const eventEmitter = new events.EventEmitter();
 
-let data;
+let config;
 const queue = new Queue();
 
-if (existsSync('jsacmof.json')) {
-  data = Object.assign(new FileBasedConfig(), JSON.parse(readFileSync('jsacmof.json', 'utf-8')));
-  if (data.cluster) {
-    data.cluster = Object.assign(new Cluster(), data.cluster);
-    if (data.cluster.hosts && data.cluster.hosts instanceof Array) {
-      var hosts = Object.assign([], data.cluster.hosts);
-      data.cluster.hosts = [];
-      hosts.forEach(host => data.cluster.hosts.push(new Host(host.host, host.port || 6161)));
+existsSync('jsacmof.json') && parseNodeConfig(JSON.parse(readFileSync('jsacmof.json', 'utf-8')));
+
+function parseNodeConfig (configData) {
+  configData = Object.assign(new FileBasedConfig(), configData);
+  if (configData.cluster) {
+    configData.cluster = Object.assign(new Cluster(), configData.cluster);
+    if (configData.cluster.hosts && configData.cluster.hosts instanceof Array) {
+      var hosts = Object.assign([], configData.cluster.hosts);
+      configData.cluster.hosts = [];
+      hosts.forEach(host => configData.cluster.hosts.push(new Host(host.host, host.port || 6161)));
     }
   }
+  config = configData;
 }
+
 const layout = { type: 'pattern' }
 var logger;
 
@@ -46,28 +50,31 @@ export class ActorSystem {
    * Actor System Constructor.
    *
    * @param {string} name The Actor System Name
+   * @param {number} port The Port to run this Node on
+   * @param {object} configOverride The Node configuration. If passed, this will replace the file-base configuration.
    */
-  constructor(name, port) {
-    port = ((data.node && data.node.port) || port) || 6161;
+  constructor(name, port, configOverride) {
+    configOverride && parseNodeConfig(configOverride);
+    port = ((config.node && config.node.port) || port) || 6161;
     layout.pattern = '%[[%d{ISO8601}]% %[[%p]% [%x{id}] %c%] - %m';
     layout.tokens = { id: ip.address() + ':' + port };
     log4js.configure({ appenders: { consoleAppender: { type: 'console', layout: layout } }, categories: { default: { appenders: ["consoleAppender"], level: "debug" } } });
     logger = log4js.getLogger('ActorSystem');
-    logger.debug('Message:', )
-    this.#name = data.node ? data.node.name : name;
+    logger.isDebugEnabled && logger.debug('Starting Actor System.');
+    this.#name = config.node ? config.node.name : name;
     var priority = Date.now().valueOf();
-    data.cluster = data.cluster ?? new Cluster([new Host(ip.address(), port)]);
+    config.cluster = config.cluster ?? new Cluster([new Host(ip.address(), port)]);
     this.#localReceptionist = new LocalReceptionist();
-    this.#clusterManager = new ClusterManager(data.cluster, port, this, priority);
+    this.#clusterManager = new ClusterManager(config.cluster, port, this, priority);
     this.#receptionist = new Receptionist(this.#clusterManager);
     this.#node = new Node(this, port, priority);
 
-    if (data.persistence) {
-      data.persistence = Object.assign(new PersistenceConfig(), data.persistence);
-      data.persistence.init();
+    if (config.persistence) {
+      config.persistence = Object.assign(new PersistenceConfig(), config.persistence);
+      config.persistence.init();
     }
-    data.startup.startupTime = data.startup.startupTime || 1;
-    this.#clusterManager.waitForIt(data.startup.startupTime);
+    config.startup.startupTime = config.startup.startupTime || 1;
+    this.#clusterManager.waitForIt(config.startup.startupTime);
   }
 
   /**
@@ -79,7 +86,7 @@ export class ActorSystem {
     // Wait for leader election to complete before returning the root actor.
     // That way, we'd have all the nodes up before creating actors, which can then be synced across them.
     var self = this;
-    setTimeout(this.waitForLeaderElectionToComplete.bind(this), data.startup.startupTime * 1000, () => {
+    setTimeout(this.waitForLeaderElectionToComplete.bind(this), config.startup.startupTime * 1000, () => {
       self.#systemRootActor = new RootActor(self);
       callback(null, self.#systemRootActor);
     });

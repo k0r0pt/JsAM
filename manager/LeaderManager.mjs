@@ -1,8 +1,10 @@
-import axios from 'axios';
 import log4js from 'log4js';
 import { Host } from '../dto/Host.mjs';
+import getUtilInstance from '../util/Util.mjs';
+import nodeUtil from 'util';
 
 const logger = log4js.getLogger('LeaderManager');
+const util = getUtilInstance();
 
 export class LeaderManager {
 
@@ -59,12 +61,12 @@ export class LeaderManager {
   async checkAndUpdateLeaderStatus() {
     var leaderIsUp;
     var currentLeader = this.getCurrentLeader();
-    var url = currentLeader.getBaseUrl();
     try {
-      await axios.get(url);
+      var client = util.getClient(currentLeader.getIdentifier());
+      await nodeUtil.promisify(client.ping).bind(client)({ msg: "Ping" });
       leaderIsUp = true;
     } catch (reason) {
-      logger.debug('Leader', url, 'went down!', reason.code)
+      logger.debug('Leader', currentLeader.getIdentifier(), 'went down!', reason)
       leaderIsUp = false;
     }
     if (!leaderIsUp) {
@@ -74,16 +76,17 @@ export class LeaderManager {
   }
 }
 
-function sendElectionMsg(host, self) {
-  var url = host.getBaseUrl() + '/election';
-  logger.debug('Querying for current leader:', url);
-  axios.post(url, { host: self.me.host, port: self.me.port, priority: self.me.priority }).then(res => {
-    logger.trace(res.status);
-    logger.trace(res);
-    self.updateNode(res.data.host, res.data.port, res.data.priority);
-  }).catch(reason => {
-    logger.error('Node', url, 'down during leader election. Removing...', reason.code)
+async function sendElectionMsg(host, self) {
+  logger.isTraceEnabled() && logger.trace('Querying for current leader:', host.getIdentifier());
+  try {
+    var client = util.getClient(host.getIdentifier());
+    var res = await nodeUtil.promisify(client.election).bind(client)({ host: self.me.host, port: self.me.port, priority: self.me.priority });
+    logger.isTraceEnabled() && logger.trace(res.status);
+    logger.isTraceEnabled() && logger.trace(res);
+    self.updateNode(res.host, res.port, res.priority);
+  } catch (reason) {
+    logger.error('Node', host.getIdentifier(), 'down during leader election. Removing...', reason)
     // Host is down. Let's remove it.
     self.clusterManager.removeHost(host);
-  });
+  };
 }

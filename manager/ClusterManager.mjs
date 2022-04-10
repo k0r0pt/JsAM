@@ -1,18 +1,15 @@
 import { Actor } from '../actor/system/Actor.mjs';
-import { ActorSystem } from '../actor/system/ActorSystem.mjs';
-import { Cluster } from '../dto/Cluster.mjs';
 import { Host } from '../dto/Host.mjs';
 import { LeaderManager } from './LeaderManager.mjs';
 import ip from 'ip';
-import axios from 'axios';
 import log4js from 'log4js';
-import { ActorBehavior } from '../actor/system/ActorBehavior.mjs';
 import { ActorRef } from '../actor/system/ActorRef.mjs';
-import { FunctionSerDeser } from '../serialization/FunctionSerializerDeserializer.mjs';
 import { ActorCreationException } from '../exception/ActorCreationException.mjs';
 import nodeUtil from 'util';
+import getUtilInstance from '../util/Util.mjs';
 
 const logger = log4js.getLogger('ClusterManager');
+const util = getUtilInstance();
 
 export class ClusterManager {
 
@@ -23,6 +20,7 @@ export class ClusterManager {
   #hosts;
   #actorSystem;
   #leaderManager;
+  #pingInterval;
   #roundRobinHostCounter = 0;
   #inProgressSpawns = {};
 
@@ -51,6 +49,7 @@ export class ClusterManager {
     }
     this.#me.setPriority(priority);
     this.#hosts = cluster.hosts;
+    this.#pingInterval = cluster.pingInterval ?? 10;
     this.#actorSystem = actorSystem;
     this.#leaderManager = new LeaderManager(this.#me, this);
   }
@@ -91,9 +90,19 @@ export class ClusterManager {
   leaderElectionComplete() {
     var complete = true;
     this.#hosts.forEach(host => complete = complete && host.getPriority() !== null);
-    // Perform Node Health Checks every second.
-    this.pingNodes();
+    if (complete) {
+      // Perform Node Health Checks every second.
+      this.pingNodes();
+    }
     return complete;
+  }
+
+  resolveToHost(url) {
+    if (url) {
+      var node = url.split('/')[2];
+      return this.getHosts().find(host => node === host.getIdentifier());
+    }
+    return this.#me;
   }
 
   iAmLeader() {
@@ -109,14 +118,13 @@ export class ClusterManager {
       if (hostInRegister === this.#me) {
         continue;
       }
-      var baseUrl = hostInRegister.getBaseUrl();
-      var url = baseUrl + '/ready';
-      logger.trace('Pinging:', baseUrl);
+      logger.isTraceEnabled() && logger.trace('Pinging:', baseUrl);
       try {
-        var res = await axios.get(url);
-        logger.trace(res);
+        var client = util.getClient(hostInRegister.getIdentifier());
+        var res = await nodeUtil.promisify(client.ping).bind(client)({ msg: 'Ping' });
+        logger.isTraceEnabled() && logger.trace(res);
       } catch (reason) {
-        logger.debug('Node', baseUrl, 'is down:', reason.code);
+        logger.debug('Node', baseUrl, 'is down:', reason);
         downHosts.push(hostInRegister);
       }
     }
@@ -131,7 +139,7 @@ export class ClusterManager {
       this.initLeaderElection();
     }
 
-    setTimeout(this.pingNodes.bind(this), 1000);
+    setTimeout(this.pingNodes.bind(this), this.#pingInterval * 1000);
   }
 
   /**
@@ -146,7 +154,13 @@ export class ClusterManager {
     }
   }
 
-  async createActor(name, locator, behaviorDefinition, errorHandler, callback) {
+  async createActor(name, locator, behaviorDefinition, callback) {
+    var existingActor = this.#actorSystem.getLocalReceptionist().lookup(locator) ?? this.#actorSystem.getReceptionist().lookup(locator);
+    if (existingActor) {
+      callback(null, existingActor);
+      return;
+    }
+
     if (!this.#inProgressSpawns[locator]) {
       this.#inProgressSpawns[locator] = [];
     }
@@ -158,55 +172,62 @@ export class ClusterManager {
       return;
     }
 
-    await this.#doCreateActor(name, locator, behaviorDefinition, errorHandler);
+    this.#doCreateActor(name, locator, behaviorDefinition);
   }
 
-  async #doCreateActor(name, locator, behaviorDefinition, errorHandler) {
+  async #doCreateActor(name, locator, behaviorDefinition) {
     var createdActor;
     var err;
     if (this.iAmLeader()) {
-      createdActor = await this.#createActorAsLeader(name, locator, behaviorDefinition, errorHandler);
+      createdActor = await this.#createActorAsLeader(name, locator, behaviorDefinition);
     } else {
       // Let's ask the Leader to create it.
       try {
-        createdActor = await this.#askLeaderToCreateActor(name, locator, behaviorDefinition, errorHandler);
+        createdActor = await this.#askLeaderToCreateActor(name, locator, behaviorDefinition);
       } catch (leaderActorCreationErr) {
         err = leaderActorCreationErr;
       }
     }
+    this.#actorSystem.getReceptionist().registerRemoteActor(createdActor);
     this.#notifyNodesOfActorCreation(err, createdActor);
   }
 
-  async #createActorAsLeader(name, locator, behaviorDefinition, errorHandler) {
-    var createdActor = this.#actorSystem.getReceptionist().lookup(locator);
+  async #createActorAsLeader(name, locator, behaviorDefinition) {
+    var createdActor = this.#actorSystem.getLocalReceptionist().lookup(locator) ?? this.#actorSystem.getReceptionist().lookup(locator);
     if (!createdActor) {
       var actorHost = this.#hosts[this.#roundRobinHostCounter++ % this.#hosts.length];
       if (this.#me === actorHost) {
-        createdActor = await this.createLocalActor(name, locator, behaviorDefinition, errorHandler);
+        createdActor = await this.createLocalActor(name, locator, behaviorDefinition);
       } else {
         var url = actorHost.getBaseUrl() + '/actorSystem/actor/' + encodeURIComponent(locator);
         try {
-          await axios.post(url, { locator: locator, behaviorDefinition: behaviorDefinition, errorHandler: errorHandler && FunctionSerDeser.serialize(errorHandler) });
+          var client = util.getClient(actorHost.getIdentifier());
+          await nodeUtil.promisify(client.createLocalActor).bind(client)({ locator: locator, behaviorDefinition: behaviorDefinition });
           createdActor = new ActorRef(this.#actorSystem, name, locator, url);
         } catch (reason) {
-          logger.error('Actor creation failed at:', url, 'with reason:', reason.code);
+          logger.error('Actor creation failed at:', url, 'with reason:', reason);
           logger.info('Retrying actor creation with the next host');
-          createdActor = await nodeUtil.promisify(this.createActor).bind(this)(name, locator, behaviorDefinition, errorHandler);
+          createdActor = await nodeUtil.promisify(this.createActor).bind(this)(name, locator, behaviorDefinition);
         }
       }
     }
     return createdActor;
   }
 
-  async #askLeaderToCreateActor(name, locator, behaviorDefinition, errorHandler) {
+  async #askLeaderToCreateActor(name, locator, behaviorDefinition) {
     var createdActor;
-    var leaderCreateActorUrl = this.getLeaderManager().getCurrentLeader().getBaseUrl() + '/actorSystem/leader/create/actor/' + encodeURIComponent(locator);
+    var leader = this.getLeaderManager().getCurrentLeader();
     try {
-      var creationResponse = await axios.post(leaderCreateActorUrl, { locator: locator, behaviorDefinition: behaviorDefinition, errorHandler: errorHandler && FunctionSerDeser.serialize(errorHandler) });
-      createdActor = new ActorRef(this.#actorSystem, name, locator, creationResponse.data.actorUrl);
+      logger.isTraceEnabled() && logger.trace('Asking Leader to create:', locator);
+      var client = util.getClient(leader.getIdentifier());
+      var creationResponse = await nodeUtil.promisify(client.createActorAsLeader).bind(client)({ locator: locator, behaviorDefinition: behaviorDefinition });
+      if (!creationResponse.actorUrl.endsWith(name)) {
+        logger.error('Promise mixed up!');
+      }
+      createdActor = new ActorRef(this.#actorSystem, name, locator, creationResponse.actorUrl);
     } catch (reason) {
-      logger.error('Actor creation failed by leader:', leaderCreateActorUrl, 'with reason:', reason.code);
-      throw new ActorCreationException('Actor creation failed by leader:', leaderCreateActorUrl, 'with reason:', reason.code);
+      logger.error('Actor creation failed by leader:', leader.getIdentifier(), 'with reason:', reason);
+      throw new ActorCreationException('Actor creation failed by leader:', leader.getIdentifier(), 'with reason:', reason);
     }
     return createdActor;
   }
@@ -217,18 +238,18 @@ export class ClusterManager {
    * @param {string} name The actor name
    * @param {string} locator The actor locator
    * @param {ActorBehavior} behaviorDefinition The file containing the {@link ActorBehavior} definition for the actor
-   * @param {Function} errorHandler The (optional) error handler function for the actor
    */
-  async createLocalActor(name, locator, behaviorDefinition, errorHandler) {
+  async createLocalActor(name, locator, behaviorDefinition) {
     // This part is what gets done when this node has to create the actor within its own ActorSystem.
-    var actor = await new Actor(this.#actorSystem, name, locator, this.#me.getBaseUrl() + '/actorSystem/actor/' + encodeURIComponent(locator), behaviorDefinition, errorHandler);
+    var actor = await new Actor(this.#actorSystem, name, locator, this.#me.getBaseUrl() + '/actorSystem/actor/' + encodeURIComponent(locator), behaviorDefinition);
     this.#actorSystem.getLocalReceptionist().addActor(locator, actor);
-    // Sync the registration with all the other node's receptionists.
-    await this.#actorSystem.getReceptionist().syncRegistration(actor);
+    // Sync the registration with all the other node's receptionists in a queue.
+    // This will take time, but at least we won't run out of ports.
+    this.#actorSystem.getReceptionist().syncRegistration(actor);
     return actor;
   }
 
-  #notifyNodesOfActorCreation(err, actor) {
+  async #notifyNodesOfActorCreation(err, actor) {
     // Notify the other nodes about the actor details now.
     this.#inProgressSpawns[actor.getLocator()] && this.#inProgressSpawns[actor.getLocator()].forEach(callback => callback(err, actor));
     delete this.#inProgressSpawns[actor.getLocator()];

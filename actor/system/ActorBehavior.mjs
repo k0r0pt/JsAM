@@ -1,3 +1,4 @@
+import { Constants } from '../../constants/Constants.mjs';
 import { Message } from '../../dto/Message.mjs';
 import { MessageProcessingException } from '../../exception/MessageProcessingException.mjs';
 
@@ -39,6 +40,6 @@ export class ActorBehavior {
     if (!handler) {
       throw new MessageProcessingException('The Behavior for ' + message.getMessageType() + ' is not defined.');
     }
-    handler(actorContext, message.getMessage());
+    handler(actorContext, message.getMessage(), message.getCallback());
   }
 }

@@ -1,26 +1,24 @@
-import { Actor } from '../actor/system/Actor.mjs';
-
 /**
  * Actor Message Queue. Every Actor will have this. And this is where the messages will be enqueued.
  */
 export class Queue {
 
   /**
-   * Constructor.
+   * Constructor. The parent must have a process() method for this to be able to invoke it.
    *
-   * @param {Actor} parentActor 
+   * @param {*} parent The parent, which may be an Actor or a Special Actor
    */
-  constructor(parentActor) {
+  constructor(parent) {
     this.elements = {};
     this.head = 0;
     this.tail = 0;
-    this.parentActor = parentActor;
+    this.parent = parent;
   }
 
   enqueue(element) {
     this.elements[this.tail] = element;
     this.tail++;
-    this.parentActor.process();
+    this.parent.process();
   }
 
   dequeue() {

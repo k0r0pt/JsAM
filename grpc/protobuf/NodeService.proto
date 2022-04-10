@@ -1,0 +1,52 @@
+syntax = "proto3";
+
+package org.coreops;
+
+import "google/protobuf/empty.proto";
+
+service NodeService {
+  rpc CreateActorAsLeader (CreateActorRequest) returns (ActorRefMsg) {};
+  rpc CreateLocalActor (CreateActorRequest) returns (ActorRefMsg) {};
+  rpc GetActor (GetActorRequest) returns (ActorRefMsg) {};
+  rpc Enqueue (EnqueueRequest) returns (EnqueueResponse) {};
+  rpc SyncRegistration (ActorRefMsg) returns (google.protobuf.Empty) {};
+  rpc Ping (PingMsg) returns (PingMsg) {};
+  rpc Election(ElectionMsg) returns (ElectionMsg) {};
+}
+
+message CreateActorRequest {
+  string locator = 1;
+  string behaviorDefinition = 2;
+}
+
+message GetActorRequest {
+  string locator = 1;
+}
+
+message ActorRefMsg {
+  string name = 1;
+  string locator = 2;
+  string actorUrl = 3;
+}
+
+message EnqueueRequest {
+  string locator = 1;
+  string messageType = 2;
+  string actionType = 3;
+  string message = 4;
+}
+
+message EnqueueResponse {
+  string err = 1;
+  string result = 2;
+}
+
+message PingMsg {
+  string msg = 1;
+}
+
+message ElectionMsg {
+  string host = 1;
+  int32 port = 2;
+  uint64 priority = 3;
+}

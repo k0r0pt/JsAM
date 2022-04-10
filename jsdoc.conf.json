@@ -1,0 +1,7 @@
+{
+  "source": {
+    "include": ["."],
+    "includePattern": ".+\\.(js(doc|x)?|mjs)$",
+    "excludePattern": "node_modules"
+  }
+}
