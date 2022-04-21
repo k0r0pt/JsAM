@@ -25,6 +25,7 @@ export class LeaderManager {
       var hostObj = new Host(host, port);
       hostObj.setPriority(priority);
       this.clusterManager.addHost(hostObj);
+      // TODO Perform Actor Rebalancing
     } else {
       this.updateNode(host, port, priority);
     }
@@ -66,7 +67,7 @@ export class LeaderManager {
       await nodeUtil.promisify(client.ping).bind(client)({ msg: "Ping" });
       leaderIsUp = true;
     } catch (reason) {
-      logger.debug('Leader', currentLeader.getIdentifier(), 'went down!', reason)
+      logger.debug('Leader', currentLeader.getIdentifier(), 'went down!', reason);
       leaderIsUp = false;
     }
     if (!leaderIsUp) {

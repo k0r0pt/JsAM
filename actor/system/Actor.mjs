@@ -13,6 +13,7 @@ export class Actor extends ActorRef {
   #queue;
   status = 'IDLE';
   #loggingPrefix;
+  #state = new Map();
 
   /**
    * Constructor. This will init the Actor. The children will be an array of {@link ActorRef} because they can be on different nodes.
@@ -36,11 +37,13 @@ export class Actor extends ActorRef {
     if (behaviorDefinition) {
       var behaviorDefFunction = await import(process.cwd() + '/' + behaviorDefinition);
       this._behavior = behaviorDefFunction.default();
-      if (this._behavior.start) {
-        this._behavior.start(this);
-      }
+      this._behavior.start(this);
     }
     return this;
+  }
+
+  getState() {
+    return this.#state;
   }
 
   getQueue() {

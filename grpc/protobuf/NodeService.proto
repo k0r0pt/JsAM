@@ -5,8 +5,8 @@ package org.coreops;
 import "google/protobuf/empty.proto";
 
 service NodeService {
-  rpc CreateActorAsLeader (CreateActorRequest) returns (ActorRefMsg) {};
-  rpc CreateLocalActor (CreateActorRequest) returns (ActorRefMsg) {};
+  rpc CreateActorAsLeader (stream CreateActorRequest) returns (stream ActorRefMsg) {};
+  rpc CreateLocalActor (stream CreateActorRequest) returns (stream ActorRefMsg) {};
   rpc GetActor (GetActorRequest) returns (ActorRefMsg) {};
   rpc Enqueue (EnqueueRequest) returns (EnqueueResponse) {};
   rpc SyncRegistrations (stream ActorRefMsg) returns (google.protobuf.Empty) {};

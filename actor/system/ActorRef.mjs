@@ -5,11 +5,12 @@ import { QueueingException } from '../../exception/QueueingException.mjs';
 import nodeUtil from 'util';
 import getUtilInstance from '../../util/Util.mjs';
 import { ActorCreationException } from '../../exception/ActorCreationException.mjs';
+import { DummyActorRef } from './DummyActorRef.mjs';
 
 const logger = log4js.getLogger('ActorRef');
 const util = getUtilInstance();
 
-export class ActorRef {
+export class ActorRef extends DummyActorRef {
 
   /**
    * The {@link ActorRef} Map of this actor's children.
@@ -27,21 +28,10 @@ export class ActorRef {
    * @param {string} behaviorDefinition The actor Behavior Definition file
    */
   constructor(actorSystem, name, locator, actorUrl, behaviorDefinition) {
-    this.name = name;
+    super(name, locator, behaviorDefinition);
     this.actorSystem = actorSystem;
-    this.locator = locator;
     this.actorUrl = actorUrl;
-    this.behaviorDefinition = behaviorDefinition;
     this.host = actorSystem.getClusterManager().resolveToHost(this.actorUrl);
-  }
-
-  /**
-   * Gets the Actor Locator.
-   *
-   * @returns the locator for this actor
-   */
-  getLocator() {
-    return this.locator;
   }
 
   getActorUrl() {
@@ -52,16 +42,8 @@ export class ActorRef {
     return this.actorSystem;
   }
 
-  getName() {
-    return this.name;
-  }
-
   getHost() {
     return this.host;
-  }
-
-  getBehaviorDefinition() {
-    return this.behaviorDefinition;
   }
 
   /**
@@ -167,7 +149,7 @@ export class ActorRef {
       return;
     }
     message = JSON.stringify(message);
-    var retryKey = this.locator + messageType + message + Constants.ACTION_TYPES.TELL;
+    var retryKey = this.locator + messageType + message + Constants.ACTION_TYPES.ASK;
     try {
       var client = util.getClient(this.host.getIdentifier());
       var response = await nodeUtil.promisify(client.enqueue).bind(client)({ locator: this.locator, messageType: messageType, message: message, actionType: Constants.ACTION_TYPES.ASK });

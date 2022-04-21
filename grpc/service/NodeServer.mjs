@@ -3,7 +3,6 @@ import { ActorRef } from '../../actor/system/ActorRef.mjs';
 import { Message } from '../../dto/Message.mjs';
 import getUtilInstance from '../../util/Util.mjs';
 import log4js from 'log4js';
-import nodeUtil from 'util';
 import { Constants } from '../../constants/Constants.mjs';
 
 const util = getUtilInstance();
@@ -12,29 +11,40 @@ const logger = log4js.getLogger('NodeServer');
 export default function NodeServer(thisActorSystem, myPort) {
   return {
 
-    createActorAsLeader: async function (call, callback) {
-      var request = call.request;
-      var locator = request.locator;
-      logger.isTraceEnabled() && logger.trace('Asked to create', locator, 'as a Leader.');
-      var locatorParts = locator.split('/');
-      var actorName = locatorParts[locatorParts.length - 1];
-      var behaviorDefinition = request.behaviorDefinition;
-      var clusterManager = thisActorSystem.getClusterManager();
-      var createdActor = await nodeUtil.promisify(clusterManager.createActor).bind(clusterManager)(actorName, locator, behaviorDefinition);
-      logger.isTraceEnabled() && logger.trace('Actor Created', createdActor.getName());
-      callback(null, { actorUrl: createdActor.getActorUrl() });
+    createActorAsLeader: async function (call) {
+      call.on('data', async request => {
+        var locator = request.locator;
+        logger.isTraceEnabled() && logger.trace('Asked to create', locator, 'as a Leader.');
+        var locatorParts = locator.split('/');
+        var actorName = locatorParts[locatorParts.length - 1];
+        var behaviorDefinition = request.behaviorDefinition;
+        var clusterManager = thisActorSystem.getClusterManager();
+        clusterManager.createActor(actorName, locator, behaviorDefinition, (_err, createdActor) => {
+          logger.isTraceEnabled() && logger.trace('Actor Created as Leader', createdActor.getName());
+          call.write({ actorUrl: createdActor.getActorUrl(), locator: createdActor.getLocator(), behaviorDefinition: createdActor.getBehaviorDefinition(), name: createdActor.getName() });
+        });
+      });
+
+      call.on('end', () => {
+        logger.error('Server Stream ended for createActorAsLeader...');
+      });
     },
 
-    createLocalActor: async function (call, callback) {
-      var request = call.request;
-      var locator = request.locator;
-      logger.isTraceEnabled() && logger.trace('Asked to create', locator, 'locally.');
-      var locatorParts = locator.split('/');
-      var actorName = locatorParts[locatorParts.length - 1];
-      var behaviorDefinition = request.behaviorDefinition;
-      var createdActor = await thisActorSystem.getClusterManager().createLocalActor(actorName, locator, behaviorDefinition);
-      // Send the created Actor now. We'll keep syncing the receptionist later.
-      callback(null, { actorUrl: createdActor.getActorUrl() });
+    createLocalActor: async function (call) {
+      call.on('data', async request => {
+        var locator = request.locator;
+        logger.isTraceEnabled() && logger.trace('Asked to create', locator, 'locally.');
+        var locatorParts = locator.split('/');
+        var actorName = locatorParts[locatorParts.length - 1];
+        var behaviorDefinition = request.behaviorDefinition;
+        var createdActor = await thisActorSystem.getClusterManager().createLocalActor(actorName, locator, behaviorDefinition);
+        // Send the created Actor now. We'll keep syncing the receptionist later.
+        call.write({ actorUrl: createdActor.getActorUrl(), locator: createdActor.getLocator(), behaviorDefinition: createdActor.getBehaviorDefinition(), name: createdActor.getName() });
+      });
+
+      call.on('end', () => {
+        logger.error('Server Stream ended for createLocalActor...');
+      });
     },
 
     getActor: function (call, callback) {
@@ -74,12 +84,13 @@ export default function NodeServer(thisActorSystem, myPort) {
       }
     },
 
-    syncRegistrations: function (call, callback) {
+    syncRegistrations: function (call) {
       call.on('data', request => {
         thisActorSystem.getReceptionist().registerRemoteActor(new ActorRef(thisActorSystem, request.name, request.locator, request.actorUrl, request.behaviorDefinition));
       });
+
       call.on('end', () => {
-        callback(null, null);
+        logger.error('Stream ended for createActorAsLeader...');
       });
     },
 
@@ -95,7 +106,7 @@ export default function NodeServer(thisActorSystem, myPort) {
       var request = call.request;
       thisActorSystem.getClusterManager().getLeaderManager().addOrUpdateNode(request.host, request.port, request.priority, request.pid);
       await thisActorSystem.getClusterManager().getLeaderManager().checkAndUpdateLeaderStatus();
-      var leader = thisActorSystem.getClusterManager().getLeaderManager().getCurrentLeader()
+      var leader = thisActorSystem.getClusterManager().getLeaderManager().getCurrentLeader();
       callback(null, { host: leader.getHost(), port: leader.getPort(), priority: leader.getPriority() });
     },
 

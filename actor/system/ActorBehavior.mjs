@@ -12,6 +12,18 @@ export class ActorBehavior {
     });
   }
 
+  onStartup(handler) {
+    this._ensureHandlerIsFunction(handler);
+    this._behaviorMapping[Constants.STARTUP_MSG_TYPE] = handler;
+    return this;
+  }
+
+  start(actorContext) {
+    if (this._behaviorMapping[Constants.STARTUP_MSG_TYPE]) {
+      this.process(new Message(Constants.STARTUP_MSG_TYPE, null), actorContext);
+    }
+  }
+
   on(messageType, handler) {
     this._ensureHandlerIsFunction(handler);
     this._behaviorMapping[messageType] = handler;

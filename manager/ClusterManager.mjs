@@ -8,6 +8,7 @@ import { ActorRef } from '../actor/system/ActorRef.mjs';
 import { ActorCreationException } from '../exception/ActorCreationException.mjs';
 import nodeUtil from 'util';
 import getUtilInstance from '../util/Util.mjs';
+import { DummyActorRef } from '../actor/system/DummyActorRef.mjs';
 
 const logger = log4js.getLogger('ClusterManager');
 const util = getUtilInstance();
@@ -24,6 +25,7 @@ export class ClusterManager {
   #pingInterval;
   #roundRobinHostCounter = 0;
   #inProgressSpawns = {};
+  #nodeWiseInProgressSpawns = {};
 
   /**
    * Constructor. This will see if cluster is present. If it is, it will use the hosts in the cluster config.
@@ -254,19 +256,17 @@ export class ClusterManager {
   }
 
   async #doCreateActor(name, locator, behaviorDefinition) {
-    var createdActor;
-    var err;
     if (this.iAmLeader()) {
-      createdActor = await this.#createActorAsLeader(name, locator, behaviorDefinition);
+      this.#createActorAsLeader(name, locator, behaviorDefinition);
     } else {
       // Let's ask the Leader to create it.
-      try {
-        createdActor = await this.#askLeaderToCreateActor(name, locator, behaviorDefinition);
-      } catch (leaderActorCreationErr) {
-        err = leaderActorCreationErr;
-      }
+      this.#askLeaderToCreateActor(name, locator, behaviorDefinition);
     }
-    createdActor && this.#actorSystem.getReceptionist().registerRemoteActor(createdActor);
+  }
+
+  async actorCreationCallback(err, createdActor) {
+    !err && logger.isTraceEnabled() && logger.trace('Actor Creation Callback', createdActor.getName());
+    !err && createdActor && this.#actorSystem.getReceptionist().registerRemoteActor(createdActor);
     this.#notifyNodesOfActorCreation(err, createdActor);
   }
 
@@ -276,38 +276,74 @@ export class ClusterManager {
       var actorHost = this.#hosts[this.#roundRobinHostCounter++ % this.#hosts.length];
       if (this.#me === actorHost) {
         createdActor = await this.createLocalActor(name, locator, behaviorDefinition);
+        this.actorCreationCallback(null, createdActor);
       } else {
-        var url = actorHost.getBaseUrl() + '/actorSystem/actor/' + encodeURIComponent(locator);
-        try {
-          var client = util.getClient(actorHost.getIdentifier());
-          await nodeUtil.promisify(client.createLocalActor).bind(client)({ locator: locator, behaviorDefinition: behaviorDefinition });
-          createdActor = new ActorRef(this.#actorSystem, name, locator, url, behaviorDefinition);
-        } catch (reason) {
-          logger.error('Actor creation failed at:', url, 'with reason:', reason);
-          logger.info('Retrying actor creation with the next host');
-          createdActor = await nodeUtil.promisify(this.createActor).bind(this)(name, locator, behaviorDefinition);
+        var actorCreationRequest = { locator: locator, behaviorDefinition: behaviorDefinition };
+        if (!this.#nodeWiseInProgressSpawns[actorHost.getIdentifier()]) {
+          this.#nodeWiseInProgressSpawns[actorHost.getIdentifier()] = new Map();
         }
+        this.#nodeWiseInProgressSpawns[actorHost.getIdentifier()].set(JSON.stringify(actorCreationRequest), Object.assign({ name: name }, actorCreationRequest));
+        var call = util.getCreateLocalActorCall(actorHost.getIdentifier(), this.createLocalActorCallback.bind(this), this.createLocalActorErrorCallback.bind(this));
+        call.write(actorCreationRequest);
       }
     }
-    return createdActor;
   }
 
   async #askLeaderToCreateActor(name, locator, behaviorDefinition) {
-    var createdActor;
     var leader = this.getLeaderManager().getCurrentLeader();
-    try {
-      logger.isTraceEnabled() && logger.trace('Asking Leader to create:', locator);
-      var client = util.getClient(leader.getIdentifier());
-      var creationResponse = await nodeUtil.promisify(client.createActorAsLeader).bind(client)({ locator: locator, behaviorDefinition: behaviorDefinition });
-      if (!creationResponse.actorUrl.endsWith(name)) {
-        logger.error('Promise mixed up!');
-      }
-      createdActor = new ActorRef(this.#actorSystem, name, locator, creationResponse.actorUrl, behaviorDefinition);
-    } catch (reason) {
-      logger.error('Actor creation failed by leader:', leader.getIdentifier(), 'with reason:', reason);
-      throw new ActorCreationException('Actor creation failed by leader:', leader.getIdentifier(), 'with reason:', reason);
+    var actorCreationRequest = { locator: locator, behaviorDefinition: behaviorDefinition };
+    logger.isTraceEnabled() && logger.trace('Asking Leader to create:', locator);
+    if (!this.#nodeWiseInProgressSpawns[leader.getIdentifier()]) {
+      this.#nodeWiseInProgressSpawns[leader.getIdentifier()] = new Map();
     }
-    return createdActor;
+    this.#nodeWiseInProgressSpawns[leader.getIdentifier()].set(JSON.stringify(actorCreationRequest), Object.assign({ name: name }, actorCreationRequest));
+    var call = util.getCreateActorAsLeaderCall(leader.getIdentifier(), this.createActorAsLeaderCallback.bind(this), this.createActorAsLeaderErrorCallback.bind(this));
+    call.write(actorCreationRequest);
+  }
+
+  createActorAsLeaderCallback(creationResponse, node) {
+    // logger.error(self.#actorSystem);
+    var createdActor = new ActorRef(this.#actorSystem, creationResponse.name, creationResponse.locator, creationResponse.actorUrl, creationResponse.behaviorDefinition);
+    logger.isTraceEnabled() && logger.trace('Leader created Actor:', creationResponse);
+    this.#nodeWiseInProgressSpawns[node].delete(JSON.stringify({ locator: createdActor.getLocator(), behaviorDefinition: createdActor.getBehaviorDefinition() }));
+    this.actorCreationCallback(null, createdActor);
+  }
+
+  createActorAsLeaderErrorCallback(reason, node) {
+    if (this.#nodeWiseInProgressSpawns[node].size > 0) {
+      logger.error('Actor creation failed by leader:', node, 'with reason:', reason);
+      this.#deleteKeysAndGetVals(node).forEach(val => this.actorCreationCallback(new ActorCreationException('Actor creation failed by leader:', node, 'with reason:', reason),
+        new DummyActorRef(val.name, val.locator, val.behaviorDefinition)));
+    }
+  }
+
+  createLocalActorCallback(creationResponse, node) {
+    var createdActor = new ActorRef(this.#actorSystem, creationResponse.name, creationResponse.locator, creationResponse.actorUrl, creationResponse.behaviorDefinition);
+    logger.isTraceEnabled() && logger.trace('Remote Host created Local Actor:', creationResponse);
+    this.#nodeWiseInProgressSpawns[node].delete(JSON.stringify({ locator: createdActor.getLocator(), behaviorDefinition: createdActor.getBehaviorDefinition() }));
+    this.actorCreationCallback(null, createdActor);
+  }
+
+  createLocalActorErrorCallback(reason, node) {
+    if (this.#nodeWiseInProgressSpawns[node].size > 0) {
+      logger.error('Actor creation failed at:', node, 'with reason:', reason);
+      logger.info('Retrying actor creation with the next host');
+      this.#deleteKeysAndGetVals(node).forEach(val => nodeUtil.promisify(this.createActor).bind(this)(val.name, val.locator, val.behaviorDefinition));
+    }
+  }
+
+  #deleteKeysAndGetVals(node) {
+    var keys = [];
+    var vals = [];
+    this.#nodeWiseInProgressSpawns[node].forEach((val, key) => {
+      keys.push(key);
+      vals.push(val);
+    });
+    keys.forEach(key => {
+      this.#nodeWiseInProgressSpawns[node].delete(key);
+    });
+
+    return vals;
   }
 
   /**
