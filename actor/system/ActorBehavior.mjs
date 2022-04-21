@@ -4,28 +4,34 @@ import { MessageProcessingException } from '../../exception/MessageProcessingExc
 
 export class ActorBehavior {
 
-  #behaviorMapping = {};
+  _behaviorMapping = {};
+
+  constructor() {
+    this.on(Constants.TRANSFER_REQUEST_MSG_TYPE, (actor, msg) => {
+      // TODO Transfer the actor.
+    });
+  }
 
   on(messageType, handler) {
-    this.#ensureHandlerIsFunction(handler);
-    this.#behaviorMapping[messageType] = handler;
+    this._ensureHandlerIsFunction(handler);
+    this._behaviorMapping[messageType] = handler;
     return this;
   }
 
   onMessage(handler) {
-    this.#ensureHandlerIsFunction(handler);
-    this.#behaviorMapping['default'] = handler;
+    this._ensureHandlerIsFunction(handler);
+    this._behaviorMapping['default'] = handler;
     return this;
   }
 
-  #ensureHandlerIsFunction(handler) {
+  _ensureHandlerIsFunction(handler) {
     if (!(handler instanceof Function)) {
       throw new Error('Invalid behavior! Must be a function! Dahoy!');
     }
   }
 
   get(messageType) {
-    return this.#behaviorMapping[messageType];
+    return this._behaviorMapping[messageType];
   }
 
   /**

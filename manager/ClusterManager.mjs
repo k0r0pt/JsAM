@@ -3,6 +3,7 @@ import { Host } from '../dto/Host.mjs';
 import { LeaderManager } from './LeaderManager.mjs';
 import ip from 'ip';
 import log4js from 'log4js';
+import async from 'async';
 import { ActorRef } from '../actor/system/ActorRef.mjs';
 import { ActorCreationException } from '../exception/ActorCreationException.mjs';
 import nodeUtil from 'util';
@@ -63,7 +64,7 @@ export class ClusterManager {
     setTimeout(this.initLeaderElection.bind(this), waitTime * 1000);
   }
 
-  initLeaderElection() {
+  async initLeaderElection() {
     this.#leaderManager.electLeader(this.#hosts, this.#me, this);
   }
 
@@ -112,34 +113,111 @@ export class ClusterManager {
   /**
    * Pings Nodes every second to see if they're up. If a node is down, removes it and initiates a new leader election.
    */
-  async pingNodes() {
-    var downHosts = [];
+  async pingNodes(callback) {
+    var pingFunctions = [];
     for (var hostInRegister of this.#hosts) {
       if (hostInRegister === this.#me) {
         continue;
       }
-      logger.isTraceEnabled() && logger.trace('Pinging:', baseUrl);
-      try {
-        var client = util.getClient(hostInRegister.getIdentifier());
-        var res = await nodeUtil.promisify(client.ping).bind(client)({ msg: 'Ping' });
-        logger.isTraceEnabled() && logger.trace(res);
-      } catch (reason) {
-        logger.debug('Node', baseUrl, 'is down:', reason);
-        downHosts.push(hostInRegister);
+      pingFunctions.push(this.getWrappedPingFunction(hostInRegister));
+    }
+
+    async.parallel(pingFunctions, (_err, downHosts) => {
+      downHosts = downHosts.filter(downHost => downHost !== null);
+      if (downHosts.length === 0) {
+        if (!callback) {
+          setTimeout(this.pingNodes.bind(this), this.#pingInterval * 1000);
+        } else {
+          callback(null, 'done');
+        }
+        return;
       }
+      var leaderDown = downHosts.findIndex(host => host === this.#leaderManager.getCurrentLeader()) !== -1;
+      // Let's remove the nodes that went down.
+      downHosts.forEach(this.removeHost.bind(this));
+
+      // Let's remove the references for actors that were in the removed Node.
+      // Update the Receptionist, which will also remove the dead children in the Actors.
+      var deletedActors = this.#actorSystem.getReceptionist().removeHosts(downHosts);
+
+      // Respawn the dead actors if I'm the (existing or new) leader.
+      this.respawnDeadActors(deletedActors);
+
+      if (leaderDown) {
+        // The leader went down. Let's initiate a leader election.
+        logger.error('Leader is down. Electing new leader!');
+        // No need to wait because the first in line to the throne is already the leader now.
+        this.initLeaderElection();
+        this.#actorSystem.waitForLeaderElectionToComplete(() => {
+          if (!this.iAmLeader()) {
+            // Let's tell the new leader what actors I have in this node.
+            var call = util.getClient(this.getLeaderManager().getCurrentLeader().getIdentifier()).syncRegistrations((err) => {
+              if (err) {
+                logger.error('Error while syncing all my actors with the leader', err);
+              } else {
+                logger.info('Synced my actors with the leader...');
+              }
+            });
+            this.#actorSystem.getLocalReceptionist().getLocalActorRefs().forEach(actorRef => {
+              call.write(actorRef);
+            });
+            call.end();
+          }
+        });
+        !callback && setTimeout(this.pingNodes.bind(this), this.#pingInterval * 1000);
+        if (callback) {
+          callback(null, 'done');
+        }
+      }
+    });
+  }
+
+  getWrappedPingFunction(hostInRegister) {
+    return asyncCallback => {
+      (async () => {
+        var node = hostInRegister.getIdentifier();
+        logger.isTraceEnabled() && logger.trace('Pinging:', node);
+        try {
+          var client = util.getPingClient(hostInRegister.getIdentifier());
+          logger.isTraceEnabled() && logger.trace('Pinging', node);
+          var res = await nodeUtil.promisify(client.ping).bind(client)({ msg: 'Ping' });
+          logger.isTraceEnabled() && logger.trace(res);
+          asyncCallback(null, null);
+        } catch (reason) {
+          logger.debug('Node', node, 'is down:', reason);
+          asyncCallback(null, hostInRegister);
+        }
+      })();
     }
+  }
 
-    var leaderDown = downHosts.findIndex(host => host === this.#leaderManager.getCurrentLeader()) !== -1;
+  respawnDeadActors(deletedActors) {
+    if (this.iAmLeader()) {
+      var creatorFunctions = [];
+      if (!deletedActors) {
+        return;
+      }
+      for (var deletedActor of deletedActors) {
+        creatorFunctions.push(this.getWrappedCreatorFunction(deletedActor, this));
+      }
+      async.parallel(creatorFunctions, (err, _result) => {
+        if (err) {
+          logger.error('Error(s) encountered while trying to respawn dead actors...', err);
+          return;
+        }
 
-    // Let's remove the nodes that went down.
-    downHosts.forEach(this.removeHost.bind(this));
-
-    if (leaderDown) {
-      // The leader went down. Let's initiate a leader election.
-      this.initLeaderElection();
+        logger.info('Recreated dead actors!', deletedActors);
+      });
     }
+  }
 
-    setTimeout(this.pingNodes.bind(this), this.#pingInterval * 1000);
+  getWrappedCreatorFunction(deletedActor, self) {
+    return asyncCallback => {
+      (async () => {
+        logger.debug('Recreating actor with name:', deletedActor.getName(), ', locator:', deletedActor.getLocator(), 'behaviorDefinition:', deletedActor.getBehaviorDefinition());
+        await self.createActor(deletedActor.getName(), deletedActor.getLocator(), deletedActor.getBehaviorDefinition(), asyncCallback)
+      })();
+    }
   }
 
   /**
@@ -188,7 +266,7 @@ export class ClusterManager {
         err = leaderActorCreationErr;
       }
     }
-    this.#actorSystem.getReceptionist().registerRemoteActor(createdActor);
+    createdActor && this.#actorSystem.getReceptionist().registerRemoteActor(createdActor);
     this.#notifyNodesOfActorCreation(err, createdActor);
   }
 
@@ -203,7 +281,7 @@ export class ClusterManager {
         try {
           var client = util.getClient(actorHost.getIdentifier());
           await nodeUtil.promisify(client.createLocalActor).bind(client)({ locator: locator, behaviorDefinition: behaviorDefinition });
-          createdActor = new ActorRef(this.#actorSystem, name, locator, url);
+          createdActor = new ActorRef(this.#actorSystem, name, locator, url, behaviorDefinition);
         } catch (reason) {
           logger.error('Actor creation failed at:', url, 'with reason:', reason);
           logger.info('Retrying actor creation with the next host');
@@ -224,7 +302,7 @@ export class ClusterManager {
       if (!creationResponse.actorUrl.endsWith(name)) {
         logger.error('Promise mixed up!');
       }
-      createdActor = new ActorRef(this.#actorSystem, name, locator, creationResponse.actorUrl);
+      createdActor = new ActorRef(this.#actorSystem, name, locator, creationResponse.actorUrl, behaviorDefinition);
     } catch (reason) {
       logger.error('Actor creation failed by leader:', leader.getIdentifier(), 'with reason:', reason);
       throw new ActorCreationException('Actor creation failed by leader:', leader.getIdentifier(), 'with reason:', reason);
@@ -245,6 +323,7 @@ export class ClusterManager {
     this.#actorSystem.getLocalReceptionist().addActor(locator, actor);
     // Sync the registration with all the other node's receptionists in a queue.
     // This will take time, but at least we won't run out of ports.
+    logger.isTraceEnabled() && logger.trace('Created', locator, 'locally...');
     this.#actorSystem.getReceptionist().syncRegistration(actor);
     return actor;
   }

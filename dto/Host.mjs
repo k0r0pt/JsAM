@@ -43,4 +43,8 @@ export class Host {
   getBaseUrl() {
     return 'http://' + this.getIdentifier();
   }
+
+  getClusterBaseUrl() {
+    return 'http://' + this.getHost() + ':' + (this.getPort() + 1);
+  }
 }

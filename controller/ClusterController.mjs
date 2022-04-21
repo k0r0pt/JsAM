@@ -19,27 +19,14 @@ export default (app, actorSystem, nodeDetails) => {
     res.send({ status: 'OK' });
   });
 
-  app.post('/election', async (req, res) => {
-    // #swagger.tags = ['Node']
-    // #swagger.summary = "Tells a Node's readiness status"
-
-    // At the beginning, I gotta ask for election.
-    // I'll tell the other nodes my priority. They'll tell which node that they know of has the least priority.
-    // Whichever node has the least priority is the leader.
-    // I ping the leader. If it's up, it's the leader.
-    actorSystem.getClusterManager().getLeaderManager().addOrUpdateNode(req.body.host, req.body.port, req.body.priority);
-    await actorSystem.getClusterManager().getLeaderManager().checkAndUpdateLeaderStatus();
-    res.send(actorSystem.getClusterManager().getLeaderManager().getCurrentLeader());
-  });
-
   app.get('/actors', async (_req, res) => {
     // #swagger.tags = ['Node']
     // #swagger.summary = 'Returns all the actors and hierarchy in this node'
     if (actorSystem.getClusterManager().iAmLeader()) {
       var rootActor = await actorSystem.getRootActor();
-      res.send(rootActor.getSerialized());
+      res.send(rootActor.serialize());
     } else {
-      res.redirect(actorSystem.getClusterManager().getLeaderManager().getCurrentLeader().getBaseUrl().concat('/actors'));
+      res.redirect(actorSystem.getClusterManager().getLeaderManager().getCurrentLeader().getClusterBaseUrl().concat('/actors'));
     }
   });
 }

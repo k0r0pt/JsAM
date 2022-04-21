@@ -1,4 +1,5 @@
 import { Actor } from './Actor.mjs';
+import { ActorBehavior } from './ActorBehavior.mjs';
 
 export class RootActor extends Actor {
 
@@ -7,7 +8,13 @@ export class RootActor extends Actor {
    *
    * @param {ActorSystem} actorSystem The Actor System.
    */
-   constructor(actorSystem) {
+  constructor(actorSystem) {
     super(actorSystem, 'ROOT', '-/');
+    // Add default behaviors.
+    this._behavior = new ActorBehavior();
+  }
+
+  removeChild(locator) {
+    super.removeChild(locator);
   }
 }

@@ -71,7 +71,7 @@ export class LeaderManager {
     }
     if (!leaderIsUp) {
       this.clusterManager.removeHost(currentLeader);
-      this.clusterManager.initLeaderElection();
+      await this.clusterManager.initLeaderElection();
     }
   }
 }
@@ -88,5 +88,5 @@ async function sendElectionMsg(host, self) {
     logger.error('Node', host.getIdentifier(), 'down during leader election. Removing...', reason)
     // Host is down. Let's remove it.
     self.clusterManager.removeHost(host);
-  };
+  }
 }

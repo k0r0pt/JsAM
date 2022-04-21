@@ -6,6 +6,7 @@ class Util {
   #grpcConnectionPool = {};
   #packageDefinition = protoLoader.loadSync('NodeService.proto', { keepCase: true, longs: Number, enums: String, defaults: true, oneofs: true, includeDirs: ['grpc/protobuf'] });
   #nodeService = grpc.loadPackageDefinition(this.#packageDefinition).org.coreops;
+  #pingClientMap = {};
 
   getSocketFile(port) {
     port = port.includes(':') ? port.split(':')[1] : port;
@@ -34,7 +35,7 @@ class Util {
       this.#grpcConnectionPool[node].nextClient = 0;
       this.#grpcConnectionPool[node].pool = [];
       // Let's do a thousand clients per node.
-      for (var i = 0; i < 1000; i++) {
+      for (var i = 0; i < 10; i++) {
         this.#grpcConnectionPool[node].pool.push(new this.#nodeService.NodeService(node, grpc.credentials.createInsecure()));
       }
     }
@@ -50,6 +51,13 @@ class Util {
     var conn = this.#grpcConnectionPool[node].getConnection()
     this.#grpcConnectionPool[node].next = next;
     return conn;
+  }
+
+  getPingClient(node) {
+    if (!this.#pingClientMap[node]) {
+      this.#pingClientMap[node] = new this.#nodeService.NodeService(node, grpc.credentials.createInsecure());
+    }
+    return this.#pingClientMap[node];
   }
 }
 

@@ -42,8 +42,11 @@ export default function NodeServer(thisActorSystem, myPort) {
       var locator = request.locator;
       logger.isTraceEnabled() && logger.trace('Asked to fetch', locator, 'from my receptionist.');
       var actor = thisActorSystem.getReceptionist().lookup(locator);
-      // Send the created Actor now. We'll keep syncing the receptionist later.
-      callback(null, ({ name: actor.getName(), locator: actor.getLocator(), actorUrl: actor.getActorUrl() }));
+      var actorRef = null;
+      if (actor) {
+        actorRef = { name: actor.getName(), locator: actor.getLocator(), actorUrl: actor.getActorUrl(), behaviorDefinition: actor.getBehaviorDefinition() }
+      }
+      callback(null, actorRef);
     },
 
     enqueue: function (call, callback) {
@@ -71,10 +74,13 @@ export default function NodeServer(thisActorSystem, myPort) {
       }
     },
 
-    syncRegistration: function (call, callback) {
-      var request = call.request;
-      thisActorSystem.getReceptionist().registerRemoteActor(new ActorRef(thisActorSystem, request.name, request.locator, request.actorUrl));
-      callback(null, null);
+    syncRegistrations: function (call, callback) {
+      call.on('data', request => {
+        thisActorSystem.getReceptionist().registerRemoteActor(new ActorRef(thisActorSystem, request.name, request.locator, request.actorUrl, request.behaviorDefinition));
+      });
+      call.on('end', () => {
+        callback(null, null);
+      });
     },
 
     ping: function (call, callback) {
@@ -102,7 +108,7 @@ export default function NodeServer(thisActorSystem, myPort) {
         createLocalActor: this.createLocalActor,
         getActor: this.getActor,
         enqueue: this.enqueue,
-        syncRegistration: this.syncRegistration,
+        syncRegistrations: this.syncRegistrations,
         ping: this.ping,
         election: this.election
       });

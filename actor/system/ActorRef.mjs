@@ -15,6 +15,7 @@ export class ActorRef {
    * The {@link ActorRef} Map of this actor's children.
    */
   #children = {};
+  #retries = {};
 
   /**
    * The Constructor.
@@ -23,12 +24,14 @@ export class ActorRef {
    * @param {string} name The actor name
    * @param {string} locator The actor locator in the Actor System
    * @param {string} actorUrl The Url for the actor
+   * @param {string} behaviorDefinition The actor Behavior Definition file
    */
-  constructor(actorSystem, name, locator, actorUrl) {
+  constructor(actorSystem, name, locator, actorUrl, behaviorDefinition) {
     this.name = name;
     this.actorSystem = actorSystem;
     this.locator = locator;
     this.actorUrl = actorUrl;
+    this.behaviorDefinition = behaviorDefinition;
     this.host = actorSystem.getClusterManager().resolveToHost(this.actorUrl);
   }
 
@@ -55,6 +58,10 @@ export class ActorRef {
 
   getHost() {
     return this.host;
+  }
+
+  getBehaviorDefinition() {
+    return this.behaviorDefinition;
   }
 
   /**
@@ -100,6 +107,12 @@ export class ActorRef {
     return this.#children[childActorName];
   }
 
+  removeChild(childLocator) {
+    var locatorParts = childLocator.split('/');
+    var childActorName = locatorParts[locatorParts.length - 1];
+    delete this.#children[childActorName];
+  }
+
   async tell(messageType, message) {
     messageType = messageType ?? 'default';
     if (this.getQueue) {
@@ -108,14 +121,37 @@ export class ActorRef {
       this.getQueue().enqueue(queueMsg);
       return;
     }
+    message = JSON.stringify(message);
+    var retryKey = this.locator + messageType + message + Constants.ACTION_TYPES.TELL;
     try {
+      var requestMsg = { locator: this.locator, messageType: messageType, message: message, actionType: Constants.ACTION_TYPES.TELL };
       var client = util.getClient(this.host.getIdentifier());
-      message = JSON.stringify(message);
-      await nodeUtil.promisify(client.enqueue).bind(client)({ locator: this.locator, messageType: messageType, message: message, actionType: Constants.ACTION_TYPES.TELL });
+      await nodeUtil.promisify(client.enqueue).bind(client)(requestMsg);
     } catch (reason) {
-      var msg = 'Queueing to' + this.locator + ' failed because of this reason:' + reason;
-      logger.error(msg);
-      throw new QueueingException(msg);
+      if (this.#retries[retryKey] === 3) {
+        delete this.#retries[retryKey];
+        var msg = 'Queueing to ' + this.actorUrl + ' failed because of this reason:' + reason;
+        logger.error(msg);
+        throw new QueueingException(msg);
+      }
+      if (this.#retries[retryKey] > 0) {
+        // I may no longer be in the same place.
+        // As in the node I'm in may have gone down, in which case my receptionist will know where I am.
+        var myNewRef = this.actorSystem.getReceptionist().lookup(this.locator);
+        if (!myNewRef || myNewRef.actorUrl === this.actorUrl) {
+          myNewRef = await this.actorSystem.getReceptionist().lookupWithLeader(this.locator);
+        }
+        if (myNewRef.actorUrl !== this.actorUrl) {
+          logger.debug('I have moved... Forwarding the tell to my new reference.', myNewRef);
+          myNewRef.tell(messageType, JSON.parse(message));
+          return;
+        }
+      }
+      logger.error('Retrying Queueing to', this.locator);
+      this.#retries[retryKey] = this.#retries[retryKey] !== undefined ? this.#retries[retryKey] + 1 : 1;
+      var self = this;
+      // Backoff incrementally by second there.
+      setTimeout(() => self.tell.bind(self)(messageType, JSON.parse(message)), this.#retries[retryKey] * 2000);
     }
   }
 
@@ -130,16 +166,37 @@ export class ActorRef {
       this.getQueue().enqueue(queueMsg);
       return;
     }
+    message = JSON.stringify(message);
+    var retryKey = this.locator + messageType + message + Constants.ACTION_TYPES.TELL;
     try {
       var client = util.getClient(this.host.getIdentifier());
-      message = JSON.stringify(message);
       var response = await nodeUtil.promisify(client.enqueue).bind(client)({ locator: this.locator, messageType: messageType, message: message, actionType: Constants.ACTION_TYPES.ASK });
       // callback if there's a callback. That will be there if it's an ask call and not a tell call.
       callback(response.err, response.result);
     } catch (reason) {
-      var msg = 'Queueing to' + this.locator + ' failed because of this reason:' + reason;
-      logger.error(msg);
-      throw new QueueingException(msg);
+      if (this.#retries[retryKey] === 3) {
+        delete this.#retries[retryKey];
+        var msg = 'Queueing to' + this.actorUrl + ' failed because of this reason:' + reason;
+        logger.error(msg);
+        throw new QueueingException(msg);
+      }
+      if (this.#retries[retryKey] > 1) {
+        // I may no longer be in the same place.
+        // As in the node I'm in may have gone down, in which case my receptionist will know where I am.
+        var myNewRef = this.actorSystem.getReceptionist().lookup(this.locator);
+        if (myNewRef.actorUrl === this.actorUrl) {
+          myNewRef = await this.actorSystem.getReceptionist().lookupWithLeader(this.locator);
+        }
+        if (myNewRef.actorUrl !== this.actorUrl) {
+          logger.debug('I have moved... Forwarding the tell to my new reference.', myNewRef);
+          myNewRef.ask(messageType, JSON.parse(message), callback);
+          return;
+        }
+      }
+      this.#retries[retryKey] = this.#retries[retryKey] !== undefined ? this.#retries[retryKey] + 1 : 1;
+      var self = this;
+      // Backoff a second there.
+      setTimeout(() => self.ask.bind(self)(messageType, JSON.parse(message), callback), this.#retries[retryKey] * 2000);
     }
   }
 
@@ -147,6 +204,13 @@ export class ActorRef {
     if (this.locator === Constants.ROOT_LOC) {
       return null;
     }
+
+    var parentLocator = this.#getParentLocator(this.locator);
+    logger.debug('Parent Locator:', parentLocator)
+    if (parentLocator.concat('/') === Constants.ROOT_LOC) {
+      return this.actorSystem.getRootActor();
+    }
+
     return this.actorSystem.getLocalReceptionist().lookup(this.#getParentLocator(this.locator))
       ?? this.actorSystem.getReceptionist().lookup(this.#getParentLocator(this.locator))
       ?? this.actorSystem.getReceptionist().lookupWithLeader(this.#getParentLocator(this.locator));
@@ -171,15 +235,9 @@ export class ActorRef {
     obj.actorUrl = this.actorUrl;
     obj.children = {};
 
-    if (this.locator === Constants.ROOT_LOC) {
-      for (var rootChild of Object.keys(this.#children)) {
-        obj.children[rootChild] = this.#children[rootChild].serialize();
-      }
-    } else {
-      var children = this.actorSystem.getReceptionist().getChildrenRefs(this.locator);
-      for (var child of Object.keys(children)) {
-        obj.children[child] = children[child].serialize();
-      }
+    var children = this.actorSystem.getReceptionist().getChildrenRefs(this.locator);
+    for (var child of Object.keys(children)) {
+      obj.children[child] = children[child].serialize();
     }
     return obj;
   }

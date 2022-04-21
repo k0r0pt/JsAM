@@ -9,7 +9,7 @@ service NodeService {
   rpc CreateLocalActor (CreateActorRequest) returns (ActorRefMsg) {};
   rpc GetActor (GetActorRequest) returns (ActorRefMsg) {};
   rpc Enqueue (EnqueueRequest) returns (EnqueueResponse) {};
-  rpc SyncRegistration (ActorRefMsg) returns (google.protobuf.Empty) {};
+  rpc SyncRegistrations (stream ActorRefMsg) returns (google.protobuf.Empty) {};
   rpc Ping (PingMsg) returns (PingMsg) {};
   rpc Election(ElectionMsg) returns (ElectionMsg) {};
 }
@@ -27,6 +27,7 @@ message ActorRefMsg {
   string name = 1;
   string locator = 2;
   string actorUrl = 3;
+  string behaviorDefinition = 4;
 }
 
 message EnqueueRequest {

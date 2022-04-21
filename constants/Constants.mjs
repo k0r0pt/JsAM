@@ -4,5 +4,6 @@ export class Constants {
     TELL: 'tell',
     ASK: 'ask'
   };
-  static TRANSFER_MSG_TYPE = 'JsAM_transferActor';
+  static TRANSFER_REQUEST_MSG_TYPE = 'JsAM_transferActor';
+  static STARTUP_MSG_TYPE = 'JsAM_Startup';
 }

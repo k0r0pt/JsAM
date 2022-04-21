@@ -6,6 +6,7 @@ import { ActorNotFoundException } from '../exception/ActorNotFoundException.mjs'
 import { ClusterManager } from '../manager/ClusterManager.mjs';
 import getUtilInstance from '../util/Util.mjs';
 import nodeUtil from 'util';
+import { Constants } from '../constants/Constants.mjs';
 
 const logger = log4js.getLogger('Receptionist');
 const util = getUtilInstance();
@@ -33,16 +34,16 @@ export class Receptionist {
   }
 
   async lookupWithLeader(locator) {
-    if (!this.#lut[locator]) {
-      var leader = this.clusterManager.getLeaderManager().getCurrentLeader();
-      try {
-        var client = util.getClient(leader.getIdentifier());
-        var res = nodeUtil.promisify(client.getActor).bind(client)({ locator: locator });
-        this.#lut[locator] = new ActorRef(this.clusterManager.getActorSystem(), res.name, res.locator, res.actorUrl);
-      } catch (reason) {
-        logger.error('Error while trying to get actor with locator', locator, 'from the leader\' receptionist.', reason);
-        throw new ActorNotFoundException('Actor with locator ' + locator + ' was not found on the leader\'s receptionist');
-      }
+    // Make sure that we're going to the right leader.
+    await nodeUtil.promisify(this.clusterManager.pingNodes).bind(this.clusterManager)();
+    var leader = this.clusterManager.getLeaderManager().getCurrentLeader();
+    try {
+      var client = util.getClient(leader.getIdentifier());
+      var res = await nodeUtil.promisify(client.getActor).bind(client)({ locator: locator });
+      this.#lut[locator] = new ActorRef(this.clusterManager.getActorSystem(), res.name, res.locator, res.actorUrl, res.behaviorDefinition);
+    } catch (reason) {
+      logger.error('Error while trying to get actor with locator', locator, 'from the leader\' receptionist.', reason);
+      throw new ActorNotFoundException('Actor with locator ' + locator + ' was not found on the leader\'s receptionist');
     }
     return this.#lut[locator];
   }
@@ -59,13 +60,46 @@ export class Receptionist {
   getChildrenRefs(locator) {
     var children = {};
     for (var lutLocator of Object.keys(this.#lut)) {
-      if (lutLocator.split('/').at(-2) === locator.split('/').at(-1)) {
+      if ((locator === Constants.ROOT_LOC && (lutLocator.split('/').at(-2) + '/') === locator)
+        || lutLocator.split('/').at(-2) === locator.split('/').at(-1)) {
         // This is a direct child's locator.
         var childActor = this.#lut[lutLocator];
         children[childActor.getName()] = childActor;
       }
     }
     return children;
+  }
+
+  getParentRef(locator) {
+    var parentLocator = locator.substring(0, locator.lastIndexOf('/'));
+    var parentRef = this.#lut[parentLocator];
+    if (parentLocator === '-') {
+      parentRef = this.clusterManager.getActorSystem().getRootActor();
+    }
+    return parentRef;
+  }
+
+  removeHosts(hosts) {
+    if (hosts.length === 0) {
+      return;
+    }
+    var locatorsToDelete = [];
+    var deletedActors = [];
+    var self = this;
+    Object.keys(this.#lut).forEach(locator => {
+      if (hosts.includes(self.#lut[locator].getHost())) {
+        locatorsToDelete.push(locator);
+      }
+    });
+    locatorsToDelete.forEach(async locator => {
+      deletedActors.push(self.#lut[locator]);
+      delete self.#lut[locator];
+      logger.isTraceEnabled() && logger.trace('Deleted dead reference', locator);
+      // Let's ask their parents, if we have them, to delete that child reference.
+      var parent = self.getParentRef(locator);
+      parent && parent.removeChild(locator);
+    });
+    return deletedActors;
   }
 
   /**

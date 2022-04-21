@@ -18,4 +18,13 @@ export class LocalReceptionist {
   lookup(locator) {
     return this.localActors[locator];
   }
+
+  getLocalActorRefs() {
+    var actorRefs = [];
+    Object.keys(this.localActors).forEach(locator => {
+      var actor = this.localActors[locator];
+      actorRefs.push({ name: actor.getName(), locator: actor.getLocator(), actorUrl: actor.getActorUrl(), behaviorDefinition: actor.getBehaviorDefinition() });
+    });
+    return actorRefs;
+  }
 }

@@ -86,8 +86,8 @@ export class ActorSystem {
     // Wait for leader election to complete before returning the root actor.
     // That way, we'd have all the nodes up before creating actors, which can then be synced across them.
     var self = this;
-    setTimeout(this.waitForLeaderElectionToComplete.bind(this), config.startup.startupTime * 1000, () => {
-      self.#systemRootActor = new RootActor(self);
+    setTimeout(this.waitForLeaderElectionToComplete.bind(this), config.startup.startupTime * 1000, async () => {
+      self.#systemRootActor = await new RootActor(self);
       callback(null, self.#systemRootActor);
     });
     this.#node.startup();
@@ -99,8 +99,8 @@ export class ActorSystem {
 
   waitForLeaderElectionToComplete(callback) {
     if (!this.#clusterManager.leaderElectionComplete()) {
-      // Wait a second
-      setTimeout(this.waitForLeaderElectionToComplete.bind(this), 1000, callback);
+      // Wait a tenth of a second
+      setTimeout(this.waitForLeaderElectionToComplete.bind(this), 100, callback);
     } else {
       callback();
     }

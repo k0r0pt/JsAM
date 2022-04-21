@@ -33,9 +33,10 @@ export class Node {
     this.#nodeServer.use(bodyParser.json());
     this.#nodeDetails = new NodeDetails(randomUUID(), ip.address(), this.#port, this.#priority);
     clusterController(this.#nodeServer, this.#actorSystem, this.#nodeDetails);
+    logger.info('Management Server Listening on', this.#port + 1);
     var nodeServer = NodeServer(this.#actorSystem, this.#port);
     nodeServer.init();
-    this.#nodeServer.listen(this.#port + 1, () => logger.info('Management Server Listening on', this.#port));
+    this.#nodeServer.listen(this.#port + 1, () => logger.info('Node Server Listening on', this.#port));
   }
 
   getNodeDetails() {
