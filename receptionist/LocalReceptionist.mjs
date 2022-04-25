@@ -15,6 +15,10 @@ export class LocalReceptionist {
     this.localActors[locator] = actor;
   }
 
+  removeActor(locator) {
+    delete this.localActors[locator];
+  }
+
   lookup(locator) {
     return this.localActors[locator];
   }

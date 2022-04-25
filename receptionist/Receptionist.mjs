@@ -119,4 +119,10 @@ export class Receptionist {
   registerRemoteActor(actorRef) {
     this.#lut[actorRef.getLocator()] = actorRef;
   }
+
+  getActors() {
+    var actors = [];
+    Object.keys(this.#lut).forEach(locator => actors.push(this.#lut[locator]));
+    return actors;
+  }
 }

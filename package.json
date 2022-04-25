@@ -1,4 +1,6 @@
 {
+  "name": "@k0r0pt/jsam",
+  "version": "0.0.1",
   "dependencies": {
     "@databases/pg": "^5.4.1",
     "@grpc/grpc-js": "^1.6.2",

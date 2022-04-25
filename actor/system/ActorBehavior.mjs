@@ -1,14 +1,31 @@
 import { Constants } from '../../constants/Constants.mjs';
 import { Message } from '../../dto/Message.mjs';
 import { MessageProcessingException } from '../../exception/MessageProcessingException.mjs';
+import getUtilInstance from '../../util/Util.mjs';
+import { ActorRef } from './ActorRef.mjs';
+
+const util = getUtilInstance();
 
 export class ActorBehavior {
 
   _behaviorMapping = {};
 
   constructor() {
-    this.on(Constants.TRANSFER_REQUEST_MSG_TYPE, (actor, msg) => {
-      // TODO Transfer the actor.
+    this.on(Constants.TRANSFER_REQUEST_MSG_TYPE, (actor, msg, callback) => {
+      if (actor.getHost().getIdentifier() === msg.toNode) {
+        callback(null, { actorUrl: actor.getActorUrl(), locator: actor.getLocator(), behaviorDefinition: actor.getBehaviorDefinition(), name: actor.getName() });
+        return;
+      }
+      actor.getActorSystem().getClusterManager().transferActor(actor, msg.toNode, (err, transferredActor) => {
+        actor.setTransferStatus(true);
+        var res;
+        if (transferredActor instanceof ActorRef) {
+          res = { actorUrl: transferredActor.getActorUrl(), locator: transferredActor.getLocator(), behaviorDefinition: transferredActor.getBehaviorDefinition(), name: transferredActor.getName() };
+        } else {
+          res = { actorUrl: transferredActor.actorUrl, locator: transferredActor.locator, behaviorDefinition: transferredActor.behaviorDefinition, name: transferredActor.name };
+        }
+        callback(err, res);
+      });
     });
   }
 

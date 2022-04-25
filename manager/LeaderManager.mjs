@@ -20,15 +20,17 @@ export class LeaderManager {
 
   addOrUpdateNode(host, port, priority) {
     var matchingHosts = this.clusterManager.getHosts().filter(existingHost => existingHost.getHost() === host && existingHost.getPort() === port);
+    var added = false;
     if (matchingHosts.length !== 1) {
       // We (hopefully) won't have a scenario where this will be more than 1.
       var hostObj = new Host(host, port);
       hostObj.setPriority(priority);
       this.clusterManager.addHost(hostObj);
-      // TODO Perform Actor Rebalancing
+      added = true;
     } else {
       this.updateNode(host, port, priority);
     }
+    return added;
   }
 
   updateNode(host, port, priority) {

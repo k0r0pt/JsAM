@@ -13,7 +13,8 @@ export class Actor extends ActorRef {
   #queue;
   status = 'IDLE';
   #loggingPrefix;
-  #state = new Map();
+  #state;
+  #amTransferred = false;
 
   /**
    * Constructor. This will init the Actor. The children will be an array of {@link ActorRef} because they can be on different nodes.
@@ -22,13 +23,16 @@ export class Actor extends ActorRef {
    * @param {string} name The actor name
    * @param {string} locator The actor locator
    * @param {string} actorUrl The complete Actor Url
+   * @param {string} behaviorDefinition The Behavior Definition File location
+   * @param {object} state The Actor State
    */
-  constructor(actorSystem, name, locator, actorUrl, behaviorDefinition) {
+  constructor(actorSystem, name, locator, actorUrl, behaviorDefinition, state) {
     super(actorSystem, name, locator, actorUrl, behaviorDefinition);
     if (name.includes('/')) {
       throw new Error('Actor name cannot have / in it.');
     }
     this.#queue = new Queue(this);
+    this.#state = !state ? {} : JSON.parse(state);
     this.#loggingPrefix = '[' + name + '@' + actorSystem.getClusterManager().getMe().getIdentifier() + ']';
     return this.#resolveBehavior(behaviorDefinition);
   }
@@ -50,6 +54,10 @@ export class Actor extends ActorRef {
     return this.#queue;
   }
 
+  setTransferStatus() {
+    this.#amTransferred = true;
+  }
+
   async process() {
     if (this.status === 'IDLE') {
       if (this.#queue.getLength() > 0) {
@@ -63,11 +71,17 @@ export class Actor extends ActorRef {
         }
         this.status = 'IDLE';
         this.process();
+      } else if (this.#amTransferred) {
+        // I've been transferred, and I'm done processing everything in my queue. Let's clean up.
+        this.shutdown();
       }
     }
   }
 
   async shutdown() {
-    this.actorSystem.getClusterManager().removeActor()
+    // Let's remove the no longer needed references as I'm only a reference to the actual (remote) actor now.
+    this.#queue = undefined;
+    this._behavior = undefined;
+    this.#state = undefined;
   }
 }

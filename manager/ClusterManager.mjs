@@ -9,6 +9,7 @@ import { ActorCreationException } from '../exception/ActorCreationException.mjs'
 import nodeUtil from 'util';
 import getUtilInstance from '../util/Util.mjs';
 import { DummyActorRef } from '../actor/system/DummyActorRef.mjs';
+import { Constants } from '../constants/Constants.mjs';
 
 const logger = log4js.getLogger('ClusterManager');
 const util = getUtilInstance();
@@ -234,6 +235,52 @@ export class ClusterManager {
     }
   }
 
+  async rebalanceActors() {
+    if (!this.iAmLeader()) {
+      return;
+    }
+    var rebalanceRoundRobinHostCounter = 0;
+    // TODO Rebalance Actors in the cluster.
+    var transferOrderFunctions = [];
+    this.#actorSystem.setStatus(Constants.AS_STATUS_REBALANCE);
+    this.#actorSystem.getReceptionist().getActors().forEach(actorRef => {
+      var actorHost = this.#hosts[rebalanceRoundRobinHostCounter++ % this.#hosts.length];
+      if (actorHost.getIdentifier() !== actorRef.getHost().getIdentifier()) {
+        // Issue a tranfer command only if it's transferring to a different node.
+        transferOrderFunctions.push(asyncCallback => {
+          // This message needs to go to the top of the queue.
+          // We will not be transferring the queue so that the old actor reference can process all messages queued so far.
+          // The new (transferred) actor will get the new messages and take over from here on out.
+          // The old actor reference will finish processing its queue and then dereference the fields that are no longer in use, essentially becoming an ActorRef.
+          // Since we'll have a new ActorRef in the old node, the old Actor will have lost all references to it after processing its entire queue (pending callbacks having been the only references to it).
+          // and should be garbage collected.
+          (async () => {
+            var transferredActorRef = await nodeUtil.promisify(actorRef.ask).bind(actorRef)(Constants.TRANSFER_REQUEST_MSG_TYPE, { toNode: actorHost.getIdentifier() }, true);
+            !transferredActorRef.actorUrl && logger.error('Received an invalid transferred Actor Reference...');
+            this.#actorSystem.getReceptionist().registerRemoteActor(new ActorRef(this.#actorSystem, transferredActorRef.name, transferredActorRef.locator, transferredActorRef.actorUrl, transferredActorRef.behaviorDefinition));
+            asyncCallback(null, 'done');
+          })();
+        });
+      }
+    });
+    async.parallel(transferOrderFunctions, (err, _results) => {
+      err && logger.error('Error encountered while trying to rebalance actors throughout the cluster.', err);
+      logger.isTraceEnabled() && logger.trace('Results of rebalance: ', _results);
+      this.#actorSystem.setStatus(Constants.AS_STATUS_READY);
+    });
+  }
+
+  async transferActor(actor, toNode, callback) {
+    if (actor.getHost().getIdentifier() === toNode) {
+      // In case I'm asked to transfer my actor to myself, do nothing. Duh!
+      callback(null, actor);
+      return;
+    }
+    this.#actorSystem.getLocalReceptionist().removeActor(actor.getLocator());
+    this.#registerActorCreationCallback(actor.getLocator(), callback);
+    this.initiateLocalActorCreation(toNode, actor.getName(), actor.getLocator(), actor.getBehaviorDefinition(), actor.getState());
+  }
+
   async createActor(name, locator, behaviorDefinition, callback) {
     var existingActor = this.#actorSystem.getLocalReceptionist().lookup(locator) ?? this.#actorSystem.getReceptionist().lookup(locator);
     if (existingActor) {
@@ -241,11 +288,7 @@ export class ClusterManager {
       return;
     }
 
-    if (!this.#inProgressSpawns[locator]) {
-      this.#inProgressSpawns[locator] = [];
-    }
-
-    this.#inProgressSpawns[locator].push(callback);
+    this.#registerActorCreationCallback(locator, callback);
 
     if (this.#inProgressSpawns[locator].length > 1) {
       // Notification after Actor Creation Completion will call the callbacks back.
@@ -253,6 +296,14 @@ export class ClusterManager {
     }
 
     this.#doCreateActor(name, locator, behaviorDefinition);
+  }
+
+  async #registerActorCreationCallback(locator, callback) {
+    if (!this.#inProgressSpawns[locator]) {
+      this.#inProgressSpawns[locator] = [];
+    }
+
+    this.#inProgressSpawns[locator].push(callback);
   }
 
   async #doCreateActor(name, locator, behaviorDefinition) {
@@ -278,14 +329,25 @@ export class ClusterManager {
         createdActor = await this.createLocalActor(name, locator, behaviorDefinition);
         this.actorCreationCallback(null, createdActor);
       } else {
-        var actorCreationRequest = { locator: locator, behaviorDefinition: behaviorDefinition };
-        if (!this.#nodeWiseInProgressSpawns[actorHost.getIdentifier()]) {
-          this.#nodeWiseInProgressSpawns[actorHost.getIdentifier()] = new Map();
-        }
-        this.#nodeWiseInProgressSpawns[actorHost.getIdentifier()].set(JSON.stringify(actorCreationRequest), Object.assign({ name: name }, actorCreationRequest));
-        var call = util.getCreateLocalActorCall(actorHost.getIdentifier(), this.createLocalActorCallback.bind(this), this.createLocalActorErrorCallback.bind(this));
-        call.write(actorCreationRequest);
+        this.initiateLocalActorCreation(actorHost.getIdentifier(), name, locator, behaviorDefinition);
       }
+    }
+  }
+
+  async initiateLocalActorCreation(node, name, locator, behaviorDefinition, state) {
+    var actorCreationRequest = { locator: locator, behaviorDefinition: behaviorDefinition };
+    if (!this.#nodeWiseInProgressSpawns[node]) {
+      this.#nodeWiseInProgressSpawns[node] = new Map();
+    }
+    logger.isTraceEnabled() && logger.trace('Asking', node, 'to create', locator);
+    this.#nodeWiseInProgressSpawns[node].set(JSON.stringify(actorCreationRequest), Object.assign({ name: name }, actorCreationRequest));
+    if (node !== this.#me.getIdentifier()) {
+      var call = util.getCreateLocalActorCall(node, this.createLocalActorCallback.bind(this), this.createLocalActorErrorCallback.bind(this));
+      call.write(Object.assign(actorCreationRequest, { state: JSON.stringify(state) }));
+    } else {
+      // This block will only be hit during rebalancing.
+      var transferredActor = await this.createLocalActor(name, locator, behaviorDefinition, state);
+      this.actorCreationCallback(null, transferredActor);
     }
   }
 
@@ -352,10 +414,11 @@ export class ClusterManager {
    * @param {string} name The actor name
    * @param {string} locator The actor locator
    * @param {ActorBehavior} behaviorDefinition The file containing the {@link ActorBehavior} definition for the actor
+   * @param {object} state The actor State
    */
-  async createLocalActor(name, locator, behaviorDefinition) {
+  async createLocalActor(name, locator, behaviorDefinition, state) {
     // This part is what gets done when this node has to create the actor within its own ActorSystem.
-    var actor = await new Actor(this.#actorSystem, name, locator, this.#me.getBaseUrl() + '/actorSystem/actor/' + encodeURIComponent(locator), behaviorDefinition);
+    var actor = await new Actor(this.#actorSystem, name, locator, this.#me.getBaseUrl() + '/actorSystem/actor/' + encodeURIComponent(locator), behaviorDefinition, state);
     this.#actorSystem.getLocalReceptionist().addActor(locator, actor);
     // Sync the registration with all the other node's receptionists in a queue.
     // This will take time, but at least we won't run out of ports.

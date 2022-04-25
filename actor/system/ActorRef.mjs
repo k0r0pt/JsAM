@@ -97,7 +97,7 @@ export class ActorRef extends DummyActorRef {
 
   async tell(messageType, message) {
     messageType = messageType ?? 'default';
-    if (this.getQueue) {
+    if (this.getQueue && this.getQueue()) {
       // Local actor. Let's do this!
       var queueMsg = new Message(messageType, message);
       this.getQueue().enqueue(queueMsg);
@@ -137,24 +137,29 @@ export class ActorRef extends DummyActorRef {
     }
   }
 
-  async ask(messageType, message, callback) {
+  async ask(messageType, message, prioritize, callback) {
+    if (typeof prioritize === 'function') {
+      callback = prioritize;
+      prioritize = false;
+    }
     if (!callback) {
       throw new QueueingException('callback is needed for ask requests.');
     }
     messageType = messageType ?? 'default';
-    if (this.getQueue) {
+    if (this.getQueue && this.getQueue()) {
       // Local actor. Let's do this!
       var queueMsg = new Message(messageType, message, callback);
-      this.getQueue().enqueue(queueMsg);
+      this.getQueue().enqueue(queueMsg, prioritize);
       return;
     }
     message = JSON.stringify(message);
     var retryKey = this.locator + messageType + message + Constants.ACTION_TYPES.ASK;
     try {
       var client = util.getClient(this.host.getIdentifier());
-      var response = await nodeUtil.promisify(client.enqueue).bind(client)({ locator: this.locator, messageType: messageType, message: message, actionType: Constants.ACTION_TYPES.ASK });
+      var response = await nodeUtil.promisify(client.enqueue).bind(client)({ locator: this.locator, messageType: messageType, message: message, prioritize: prioritize, actionType: Constants.ACTION_TYPES.ASK });
       // callback if there's a callback. That will be there if it's an ask call and not a tell call.
-      callback(response.err, response.result);
+      messageType === Constants.TRANSFER_REQUEST_MSG_TYPE && logger.error('Transfer ask response:', response);
+      callback(JSON.parse(response.err), JSON.parse(response.result));
     } catch (reason) {
       if (this.#retries[retryKey] === 3) {
         delete this.#retries[retryKey];
@@ -170,15 +175,16 @@ export class ActorRef extends DummyActorRef {
           myNewRef = await this.actorSystem.getReceptionist().lookupWithLeader(this.locator);
         }
         if (myNewRef.actorUrl !== this.actorUrl) {
-          logger.debug('I have moved... Forwarding the tell to my new reference.', myNewRef);
-          myNewRef.ask(messageType, JSON.parse(message), callback);
+          logger.debug('I have moved... Forwarding the tell to my new reference. And then telling my parent to update my reference.', myNewRef);
+          myNewRef.ask(messageType, JSON.parse(message), prioritize, callback);
+          this.getParent().updateChildRef(myNewRef);
           return;
         }
       }
       this.#retries[retryKey] = this.#retries[retryKey] !== undefined ? this.#retries[retryKey] + 1 : 1;
       var self = this;
       // Backoff a second there.
-      setTimeout(() => self.ask.bind(self)(messageType, JSON.parse(message), callback), this.#retries[retryKey] * 2000);
+      setTimeout(() => self.ask.bind(self)(messageType, JSON.parse(message), prioritize, callback), this.#retries[retryKey] * 2000);
     }
   }
 

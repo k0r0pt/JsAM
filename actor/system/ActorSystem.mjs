@@ -13,6 +13,7 @@ import { Host } from '../../dto/Host.mjs';
 import ip from 'ip';
 import { RootActor } from './RootActor.mjs';
 import { Receptionist } from '../../receptionist/Receptionist.mjs';
+import { Constants } from '../../constants/Constants.mjs';
 
 const eventEmitter = new events.EventEmitter();
 
@@ -45,6 +46,7 @@ export class ActorSystem {
   #clusterManager;
   #receptionist;
   #node;
+  #status;
 
   /**
    * Actor System Constructor.
@@ -54,6 +56,7 @@ export class ActorSystem {
    * @param {object} configOverride The Node configuration. If passed, this will replace the file-base configuration.
    */
   constructor(name, port, configOverride) {
+    this.#status = Constants.AS_STATUS_STARTING;
     configOverride && parseNodeConfig(configOverride);
     port = ((config.node && config.node.port) || port) || 6161;
     layout.pattern = '%[[%d{ISO8601}]% %[[%p]% [%x{id}] %c%] - %m';
@@ -75,6 +78,10 @@ export class ActorSystem {
     }
     config.startup.startupTime = config.startup.startupTime || 1;
     this.#clusterManager.waitForIt(config.startup.startupTime);
+    process.on('uncaughtException', err => {
+      logger.error('Going down because of an Uncaught Exception in Actor System!', err)
+      process.exit(255);
+    });
   }
 
   /**
@@ -88,13 +95,26 @@ export class ActorSystem {
     var self = this;
     setTimeout(this.waitForLeaderElectionToComplete.bind(this), config.startup.startupTime * 1000, async () => {
       self.#systemRootActor = await new RootActor(self);
+      self.setStatus(Constants.AS_STATUS_READY);
       callback(null, self.#systemRootActor);
     });
     this.#node.startup();
   }
 
+  getStartupTime() {
+    return config.startup.startupTime;
+  }
+
   getRootActor() {
     return this.#systemRootActor;
+  }
+
+  getStatus() {
+    return this.#status;
+  }
+
+  setStatus(status) {
+    this.#status = status;
   }
 
   waitForLeaderElectionToComplete(callback) {

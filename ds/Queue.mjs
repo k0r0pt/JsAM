@@ -15,8 +15,16 @@ export class Queue {
     this.parent = parent;
   }
 
-  enqueue(element) {
-    this.elements[this.tail] = element;
+  enqueue(element, prioritize) {
+    if (prioritize) {
+      // Shift the elements and put the element at the head.
+      for (var i = this.head; i <= this.tail; i++) {
+        this.elements[i + 1] = this.elements[i];
+      }
+      this.elements[this.head] = element;
+    } else {
+      this.elements[this.tail] = element;
+    }
     this.tail++;
     this.parent.process();
   }

@@ -37,8 +37,10 @@ export default function NodeServer(thisActorSystem, myPort) {
         var locatorParts = locator.split('/');
         var actorName = locatorParts[locatorParts.length - 1];
         var behaviorDefinition = request.behaviorDefinition;
-        var createdActor = await thisActorSystem.getClusterManager().createLocalActor(actorName, locator, behaviorDefinition);
+        var state = request.state;
+        var createdActor = await thisActorSystem.getClusterManager().createLocalActor(actorName, locator, behaviorDefinition, state);
         // Send the created Actor now. We'll keep syncing the receptionist later.
+        logger.isTraceEnabled() && logger.trace('Created: ', createdActor);
         call.write({ actorUrl: createdActor.getActorUrl(), locator: createdActor.getLocator(), behaviorDefinition: createdActor.getBehaviorDefinition(), name: createdActor.getName() });
       });
 
@@ -65,9 +67,21 @@ export default function NodeServer(thisActorSystem, myPort) {
       var messageType = request.messageType;
       var message = JSON.parse(request.message);
       var actionType = request.actionType;
+      var prioritize = request.prioritize;
+      var metadata = new grpc.Metadata();
+      var errMsg;
+      if (thisActorSystem.getStatus() !== Constants.AS_STATUS_READY && thisActorSystem.getStatus() !== Constants.AS_STATUS_REBALANCE) {
+        errMsg = 'Actor System is not ready yet. Actor System Status is:'.concat(thisActorSystem.getStatus());
+        logger.error(errMsg);
+        metadata.set('details', errMsg);
+        return callback(new grpc.StatusBuilder().withCode(grpc.status.UNAVAILABLE).withDetails({ err: errMsg }).withMetadata(metadata), null);
+      }
       var localActor = thisActorSystem.getLocalReceptionist().lookup(locator)
       if (!localActor) {
-        return callback(new grpc.StatusBuilder().withCode(grpc.status.NOT_FOUND).withDetails({ err: 'Actor not found.' }), null);
+        errMsg = 'Actor Not Found. Actor with locator: '.concat(locator).concat(' was not found here...');
+        logger.error(errMsg);
+        metadata.set('details', errMsg);
+        return callback(new grpc.StatusBuilder().withCode(grpc.status.NOT_FOUND).withDetails({ err: errMsg }).withMetadata(metadata), null);
       }
 
       if (actionType === Constants.ACTION_TYPES.TELL) {
@@ -76,11 +90,12 @@ export default function NodeServer(thisActorSystem, myPort) {
         return callback(null, { result: 'enqueued.' });
       } else if (actionType === Constants.ACTION_TYPES.ASK) {
         // Ask and wait
-        localActor.getQueue().enqueue(new Message(messageType, message, (err, result) => {
-          return callback(null, { err: err, result: result });
-        }));
+        localActor.getQueue().enqueue(new Message(messageType, message, (err, result) => callback(null, { err: JSON.stringify(err), result: JSON.stringify(result) }), prioritize));
       } else {
-        return callback(grpc.StatusBuilder().withCode(grpc.status.UNKNOWN).withDetails('Invalid actionType: ' + actionType), null);
+        errMsg = 'Invalid actionType: '.concat(actionType);
+        logger.error(errMsg);
+        metadata.set('details', errMsg);
+        return callback(grpc.StatusBuilder().withCode(grpc.status.UNKNOWN).withDetails({ err: errMsg }).withMetadata(metadata), null);
       }
     },
 
@@ -104,10 +119,16 @@ export default function NodeServer(thisActorSystem, myPort) {
       // Whichever node has the least priority is the leader.
       // I ping the leader. If it's up, it's the leader.
       var request = call.request;
-      thisActorSystem.getClusterManager().getLeaderManager().addOrUpdateNode(request.host, request.port, request.priority, request.pid);
+      var newHostAdded = thisActorSystem.getClusterManager().getLeaderManager().addOrUpdateNode(request.host, request.port, request.priority, request.pid);
       await thisActorSystem.getClusterManager().getLeaderManager().checkAndUpdateLeaderStatus();
       var leader = thisActorSystem.getClusterManager().getLeaderManager().getCurrentLeader();
       callback(null, { host: leader.getHost(), port: leader.getPort(), priority: leader.getPriority() });
+      newHostAdded && logger.debug('New Host Joined the cluster. Starting Election...');
+      newHostAdded && thisActorSystem.getClusterManager().getLeaderManager().electLeader();
+      newHostAdded && thisActorSystem.getClusterManager().iAmLeader() && setTimeout(thisActorSystem.waitForLeaderElectionToComplete.bind(thisActorSystem), thisActorSystem.getStartupTime() * 1000, async () => {
+        thisActorSystem.getClusterManager().rebalanceActors();
+        logger.debug('Waited for configured Startup Time and election should now be complete. Rebalancing...');
+      });
     },
 
     init: function (local) {
