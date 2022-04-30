@@ -80,9 +80,9 @@ await ra.spawnChild('MyActor', './path/to/MyActorBehavior.mjs');
 
 ## Examples
 
-We have a few examples, which we used as case studies during the development of this framework. Those should give you a better idea of how to write applications using JsAM. The examples can be found in the [jsam-examples](../jsam-examples) repository.
+We have a few examples, which we used as case studies during the development of this framework. Those should give you a better idea of how to write applications using JsAM. The examples can be found in the [jsam-examples](https://github.com/k0r0pt/jsam-examples) repository.
 
-A good example to start with is the classic [Ping-Pong](../jsam-examples/ping-pong) example, wherein a messge is passed among two actors.
+A good example to start with is the classic [Ping-Pong](https://github.com/k0r0pt/jsam-examples/tree/main/ping-pong) example, wherein a messge is passed among two actors.
 
 ## Under the hood
 
