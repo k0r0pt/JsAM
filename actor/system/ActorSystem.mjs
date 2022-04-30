@@ -17,10 +17,10 @@ import { Constants } from '../../constants/Constants.mjs';
 
 const eventEmitter = new events.EventEmitter();
 
-let config;
+let config = {};
 const queue = new Queue();
 
-existsSync('jsacmof.json') && parseNodeConfig(JSON.parse(readFileSync('jsacmof.json', 'utf-8')));
+existsSync('jsam.json') && parseNodeConfig(JSON.parse(readFileSync('jsam.json', 'utf-8')));
 
 function parseNodeConfig (configData) {
   configData = Object.assign(new FileBasedConfig(), configData);
@@ -76,6 +76,7 @@ export class ActorSystem {
       config.persistence = Object.assign(new PersistenceConfig(), config.persistence);
       config.persistence.init();
     }
+    config.startup = config.startup ? config.startup : {};
     config.startup.startupTime = config.startup.startupTime || 1;
     this.#clusterManager.waitForIt(config.startup.startupTime);
     process.on('uncaughtException', err => {

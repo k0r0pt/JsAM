@@ -1,6 +1,26 @@
 {
   "name": "@k0r0pt/jsam",
-  "version": "0.0.1",
+  "version": "0.0.1-alpha",
+  "description": "The Javascript Actor Model Framework",
+  "license": "Apache-2.0",
+  "author": "Sudipto Sarkar",
+  "main": "index.mjs",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/k0r0pt/JsAM.git"
+  },
+  "keywords": [
+    "actor",
+    "model",
+    "k0r0pt",
+    "jsam",
+    "node",
+    "actor-model",
+    "framework"
+  ],
   "dependencies": {
     "@databases/pg": "^5.4.1",
     "@grpc/grpc-js": "^1.6.2",

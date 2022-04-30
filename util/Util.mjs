@@ -4,7 +4,7 @@ import protoLoader from '@grpc/proto-loader';
 class Util {
 
   #grpcConnectionPool = {};
-  #packageDefinition = protoLoader.loadSync('NodeService.proto', { keepCase: true, longs: Number, enums: String, defaults: true, oneofs: true, includeDirs: ['grpc/protobuf'] });
+  #packageDefinition = protoLoader.loadSync('NodeService.proto', { keepCase: true, longs: Number, enums: String, defaults: true, oneofs: true, includeDirs: ['node_modules/@k0r0pt/jsam/grpc/protobuf', 'grpc/protobuf'] });
   #nodeService = grpc.loadPackageDefinition(this.#packageDefinition).org.coreops;
   #pingClientMap = {};
   #createActorAsLeaderCallMap = {};
