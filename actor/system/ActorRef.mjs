@@ -70,6 +70,10 @@ export class ActorRef extends DummyActorRef {
     return this;
   }
 
+  updateChildRef(childActor) {
+    this.#children[childActor.name] = childActor;
+  }
+
   /**
    * Gets the child actor specified by the name.
    *
@@ -124,15 +128,16 @@ export class ActorRef extends DummyActorRef {
           myNewRef = await this.actorSystem.getReceptionist().lookupWithLeader(this.locator);
         }
         if (myNewRef.actorUrl !== this.actorUrl) {
-          logger.debug('I have moved... Forwarding the tell to my new reference.', myNewRef);
+          logger.debug('I have moved... Forwarding the tell to my new reference. And then telling my parent to update my reference.', myNewRef);
           myNewRef.tell(messageType, JSON.parse(message));
+          (await this.getParent()).updateChildRef(myNewRef);
           return;
         }
       }
       logger.error('Retrying Queueing to', this.locator);
       this.#retries[retryKey] = this.#retries[retryKey] !== undefined ? this.#retries[retryKey] + 1 : 1;
       var self = this;
-      // Backoff incrementally by second there.
+      // Backoff incrementally by a second there.
       setTimeout(() => self.tell.bind(self)(messageType, JSON.parse(message)), this.#retries[retryKey] * 2000);
     }
   }
@@ -163,27 +168,28 @@ export class ActorRef extends DummyActorRef {
     } catch (reason) {
       if (this.#retries[retryKey] === 3) {
         delete this.#retries[retryKey];
-        var msg = 'Queueing to' + this.actorUrl + ' failed because of this reason:' + reason;
+        var msg = 'Queueing to ' + this.actorUrl + ' failed because of this reason:' + reason;
         logger.error(msg);
         throw new QueueingException(msg);
       }
-      if (this.#retries[retryKey] > 1) {
+      if (this.#retries[retryKey] > 0) {
         // I may no longer be in the same place.
         // As in the node I'm in may have gone down, in which case my receptionist will know where I am.
         var myNewRef = this.actorSystem.getReceptionist().lookup(this.locator);
-        if (myNewRef.actorUrl === this.actorUrl) {
+        if (!myNewRef || myNewRef.actorUrl === this.actorUrl) {
           myNewRef = await this.actorSystem.getReceptionist().lookupWithLeader(this.locator);
         }
         if (myNewRef.actorUrl !== this.actorUrl) {
           logger.debug('I have moved... Forwarding the tell to my new reference. And then telling my parent to update my reference.', myNewRef);
           myNewRef.ask(messageType, JSON.parse(message), prioritize, callback);
-          this.getParent().updateChildRef(myNewRef);
+          (await this.getParent()).updateChildRef(myNewRef);
           return;
         }
       }
+      logger.error('Retrying Queueing to', this.locator);
       this.#retries[retryKey] = this.#retries[retryKey] !== undefined ? this.#retries[retryKey] + 1 : 1;
       var self = this;
-      // Backoff a second there.
+      // Backoff incrementally by a second there.
       setTimeout(() => self.ask.bind(self)(messageType, JSON.parse(message), prioritize, callback), this.#retries[retryKey] * 2000);
     }
   }
