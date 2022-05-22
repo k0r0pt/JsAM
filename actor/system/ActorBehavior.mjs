@@ -1,10 +1,7 @@
 import { Constants } from '../../constants/Constants.mjs';
 import { Message } from '../../dto/Message.mjs';
 import { MessageProcessingException } from '../../exception/MessageProcessingException.mjs';
-import getUtilInstance from '../../util/Util.mjs';
 import { ActorRef } from './ActorRef.mjs';
-
-const util = getUtilInstance();
 
 export class ActorBehavior {
 
@@ -35,10 +32,12 @@ export class ActorBehavior {
     return this;
   }
 
-  start(actorContext) {
+  async start(actorContext, callback) {
     if (this._behaviorMapping[Constants.STARTUP_MSG_TYPE]) {
-      this.process(new Message(Constants.STARTUP_MSG_TYPE, null), actorContext);
+      await this.process(new Message(Constants.STARTUP_MSG_TYPE, null, callback), actorContext);
+      return;
     }
+    callback(null, null);
   }
 
   on(messageType, handler) {
@@ -70,11 +69,15 @@ export class ActorBehavior {
    * @param {Actor} actorContext The {@link Actor} context it needs to be processed in
    * @throws {@link MessageProcessingException} If the behavior for the message type is not defined
    */
-  process(message, actorContext) {
+  async process(message, actorContext) {
     var handler = this.get(message.getMessageType());
     if (!handler) {
       throw new MessageProcessingException('The Behavior for ' + message.getMessageType() + ' is not defined.');
     }
-    handler(actorContext, message.getMessage(), message.getCallback());
+    if (message.getMessageType() === Constants.STARTUP_MSG_TYPE) {
+      await handler(actorContext, message.getCallback());
+    } else {
+      await handler(actorContext, message.getMessage(), message.getCallback());
+    }
   }
 }

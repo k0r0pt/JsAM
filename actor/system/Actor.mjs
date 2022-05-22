@@ -1,6 +1,7 @@
 import { Queue } from '../../ds/Queue.mjs';
 import { ActorRef } from './ActorRef.mjs';
 import log4js from 'log4js';
+import nodeUtil from 'util';
 
 const logger = log4js.getLogger('Actor');
 
@@ -41,7 +42,7 @@ export class Actor extends ActorRef {
     if (behaviorDefinition) {
       var behaviorDefFunction = await import(process.cwd() + '/' + behaviorDefinition);
       this._behavior = behaviorDefFunction.default();
-      this._behavior.start(this);
+      await nodeUtil.promisify(this._behavior.start).bind(this._behavior)(this);
     }
     return this;
   }

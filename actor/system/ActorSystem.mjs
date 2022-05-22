@@ -14,6 +14,7 @@ import ip from 'ip';
 import { RootActor } from './RootActor.mjs';
 import { Receptionist } from '../../receptionist/Receptionist.mjs';
 import { Constants } from '../../constants/Constants.mjs';
+import k8s from '@kubernetes/client-node';
 
 const eventEmitter = new events.EventEmitter();
 
@@ -22,7 +23,31 @@ const queue = new Queue();
 
 existsSync('jsam.json') && parseNodeConfig(JSON.parse(readFileSync('jsam.json', 'utf-8')));
 
-function parseNodeConfig (configData) {
+function parseKubeConfig(callback) {
+  const kc = new k8s.KubeConfig();
+  kc.loadFromDefault();
+  const k8sApi = kc.makeApiClient(k8s.CoreV1Api);
+
+  k8sApi.listNamespacedPod(process.env.NAMESPACE || 'default').then(res => {
+    var otherPodIps = [];
+    res.body.items && res.body.items.forEach(item => {
+      console.log('item.status:', item.status);
+      console.log('item.status.podIP:', item.status.podIP);
+      (item.status.podIP !== ip.address()) && otherPodIps.push(item.status.podIP)
+    });
+    console.log('Namespace Pods List: ', JSON.stringify(res.body));
+    console.log('Other Pod IPs:', otherPodIps);
+    console.log('My IP:', ip.address());
+    if (!otherPodIps.includes(undefined)) {
+      callback(otherPodIps);
+    } else {
+      // Not all pods have been assigned IPs. Let's wait for a second and try again.
+      setTimeout(parseKubeConfig, 1000, callback);
+    }
+  });
+}
+
+function parseNodeConfig(configData) {
   configData = Object.assign(new FileBasedConfig(), configData);
   if (configData.cluster) {
     configData.cluster = Object.assign(new Cluster(), configData.cluster);
@@ -33,6 +58,10 @@ function parseNodeConfig (configData) {
     }
   }
   config = configData;
+}
+
+function getPort(port) {
+  return ((config.node && config.node.port) || port) || 6161;
 }
 
 const layout = { type: 'pattern' }
@@ -49,16 +78,44 @@ export class ActorSystem {
   #status;
 
   /**
+   * Get an Autoconfigured Actor System. This will be specifically useful when overriding file based config or when running in a Kubernetes Pod.
+   *
+   * @param {string} name The Actor System Name
+   * @param {number} port The Port to run this Node on
+   * @param {object} configOverride The Node configuration. If passed, this will replace the file-base configuration
+   * @param {Function} callback Callback function which will be called after completion
+   */
+  static getActorSystem(name, port, configOverride, callback) {
+    if (typeof callback === 'undefined' && typeof configOverride === 'function') {
+      callback = configOverride;
+      configOverride = undefined;
+    } else if (typeof callback === 'undefined' && typeof configOverride === 'undefined' && typeof port === 'function') {
+      callback = port;
+      port = undefined;
+    }
+    configOverride && parseNodeConfig(configOverride);
+    if (process.env.KUBERNETES_SERVICE_HOST) {
+      // Running in a Kubernetes cluster. Ignore the cluster in the config override.
+      parseKubeConfig(otherPodIps => {
+        var hosts = [new Host(ip.address(), getPort(port))];
+        otherPodIps.forEach(podIp => hosts.push(new Host(podIp, getPort(port))));
+        config.cluster = config.cluster ?? new Cluster(hosts);
+        callback(null, new ActorSystem(name, port));
+      });
+    } else {
+      callback(null, new ActorSystem(name, port));
+    }
+  }
+
+  /**
    * Actor System Constructor.
    *
    * @param {string} name The Actor System Name
    * @param {number} port The Port to run this Node on
-   * @param {object} configOverride The Node configuration. If passed, this will replace the file-base configuration.
    */
-  constructor(name, port, configOverride) {
+  constructor(name, port) {
     this.#status = Constants.AS_STATUS_STARTING;
-    configOverride && parseNodeConfig(configOverride);
-    port = ((config.node && config.node.port) || port) || 6161;
+    port = getPort(port);
     layout.pattern = '%[[%d{ISO8601}]% %[[%p]% [%x{id}] %c%] - %m';
     layout.tokens = { id: ip.address() + ':' + port };
     log4js.configure({ appenders: { consoleAppender: { type: 'console', layout: layout } }, categories: { default: { appenders: ["consoleAppender"], level: "debug" } } });
@@ -77,7 +134,7 @@ export class ActorSystem {
       config.persistence.init();
     }
     config.startup = config.startup ? config.startup : {};
-    config.startup.startupTime = config.startup.startupTime || 1;
+    config.startup.startupTime = (process.env.STARTUP_TIME ? parseInt(process.env.STARTUP_TIME) : config.startup.startupTime ?? 1);
     this.#clusterManager.waitForIt(config.startup.startupTime);
     process.on('uncaughtException', err => {
       logger.error('Going down because of an Uncaught Exception in Actor System!', err)
@@ -119,7 +176,7 @@ export class ActorSystem {
   }
 
   waitForLeaderElectionToComplete(callback) {
-    if (!this.#clusterManager.leaderElectionComplete()) {
+    if (!this.#clusterManager || !this.#clusterManager.leaderElectionComplete()) {
       // Wait a tenth of a second
       setTimeout(this.waitForLeaderElectionToComplete.bind(this), 100, callback);
     } else {
