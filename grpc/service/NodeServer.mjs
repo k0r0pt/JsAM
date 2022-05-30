@@ -105,7 +105,7 @@ export default function NodeServer(thisActorSystem, myPort) {
       });
 
       call.on('end', () => {
-        logger.error('Stream ended for createActorAsLeader...');
+        logger.error('Stream ended for syncRegistrations...');
       });
     },
 
@@ -131,8 +131,30 @@ export default function NodeServer(thisActorSystem, myPort) {
       });
     },
 
+    syncCache: function (call) {
+      call.on('data', request => {
+        var key = request.key;
+        var value = request.value;
+        if (value) {
+          thisActorSystem.getCache().set(key, JSON.parse(value));
+        } else {
+          thisActorSystem.getCache().clear(key);
+        }
+        call.write({ key: key });
+      });
+
+      call.on('end', () => {
+        logger.error('Stream ended for syncCache...');
+      });
+    },
+
     init: function (local) {
-      var server = new grpc.Server({ "grpc.max_concurrent_streams": 4294967295, "grpc-node.max_session_memory": 107374182499 }); // { "grpc-node.max_session_memory": 107374182400, "grpc.max_concurrent_streams": 1000000000, "grpc.enable_channelz": 1000000000 });
+      var server = new grpc.Server({
+        "grpc.max_concurrent_streams": 4294967295,
+        "grpc-node.max_session_memory": 107374182499,
+        "grpc.max_send_message_length": 1024 * 1024 * 100, // 100 MB
+        "grpc.max_receive_message_length": 1024 * 1024 * 100, // 100 MB
+      }); // { "grpc-node.max_session_memory": 107374182400, "grpc.max_concurrent_streams": 1000000000, "grpc.enable_channelz": 1000000000 });
       var nodeService = util.getNodeService();
 
       server.addService(nodeService.NodeService.service, {
@@ -142,7 +164,8 @@ export default function NodeServer(thisActorSystem, myPort) {
         enqueue: this.enqueue,
         syncRegistrations: this.syncRegistrations,
         ping: this.ping,
-        election: this.election
+        election: this.election,
+        syncCache: this.syncCache
       });
 
       if (!local) {

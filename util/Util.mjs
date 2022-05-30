@@ -9,6 +9,7 @@ class Util {
   #pingClientMap = {};
   #createActorAsLeaderCallMap = {};
   #createLocalActorCallMap = {};
+  #syncCacheCallMap = {};
 
   getSocketFile(port) {
     port = port.includes(':') ? port.split(':')[1] : port;
@@ -92,6 +93,30 @@ class Util {
       });
     }
     return this.#createActorAsLeaderCallMap[node];
+  }
+
+  getSyncCacheCall(node, callback, errorCallback) {
+    if (!this.#syncCacheCallMap[node]) {
+      var client = new this.#nodeService.NodeService(node, grpc.credentials.createInsecure());
+      var metadata = new Metadata();
+      metadata.set('node', node);
+      this.#syncCacheCallMap[node] = client.syncCache(metadata, { node: node });
+      this.#syncCacheCallMap[node].on('data', data => {
+        callback(data, node);
+      });
+      this.#syncCacheCallMap[node].on('end', () => {
+        console.log('Ending client stream for syncCache call.');
+        this.#syncCacheCallMap[node] && this.#syncCacheCallMap[node].end();
+        delete this.#syncCacheCallMap[node];
+      });
+      this.#syncCacheCallMap[node].on('error', reason => {
+        console.log('Ending client stream for syncCache call because of error.');
+        this.#syncCacheCallMap[node] && this.#syncCacheCallMap[node].end();
+        delete this.#syncCacheCallMap[node];
+        errorCallback(reason, node);
+      });
+    }
+    return this.#syncCacheCallMap[node];
   }
 
   /**

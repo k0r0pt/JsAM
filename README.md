@@ -1,5 +1,7 @@
 # JsAM - The JavaScript Actor Model Framework
 
+# [![JsAM](JsAMLogo.png)](JsAMLogo.png)
+
 ## Wut?
 
 JsAM is a powerful [actor model](https://en.wikipedia.org/wiki/Actor_model) framework.
@@ -21,10 +23,9 @@ JsAM currently has these features:
 * Actor Communications through [gRPC](https://grpc.io)
 * Actor Respawning - In case nodes go down
 * Cluster Rebalancing - In case nodes are added
+* [Kubernetes API](https://kubernetes.io/docs/concepts/overview/kubernetes-api/) support - So that we can deploy to Kubernetes Clusters
 
 ### Planned features
-
-* [Kubernetes API](https://kubernetes.io/docs/concepts/overview/kubernetes-api/) support - So that we can deploy to Kubernetes Clusters
 
 ## How?
 
