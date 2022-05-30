@@ -12,6 +12,7 @@ service NodeService {
   rpc SyncRegistrations (stream ActorRefMsg) returns (google.protobuf.Empty) {};
   rpc Ping (PingMsg) returns (PingMsg) {};
   rpc Election(ElectionMsg) returns (ElectionMsg) {};
+  rpc SyncCache(stream SyncCacheRequest) returns (stream SyncCacheResponse) {};
 }
 
 message CreateActorRequest {
@@ -52,4 +53,13 @@ message ElectionMsg {
   string host = 1;
   int32 port = 2;
   uint64 priority = 3;
+}
+
+message SyncCacheRequest {
+  string key = 1;
+  string value = 2;
+}
+
+message SyncCacheResponse {
+  string key = 1;
 }

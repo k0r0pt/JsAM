@@ -15,6 +15,7 @@ import { RootActor } from './RootActor.mjs';
 import { Receptionist } from '../../receptionist/Receptionist.mjs';
 import { Constants } from '../../constants/Constants.mjs';
 import k8s from '@kubernetes/client-node';
+import { ActorSystemCache } from '../../cache/ActorSystemCache.mjs';
 
 const eventEmitter = new events.EventEmitter();
 
@@ -76,6 +77,8 @@ export class ActorSystem {
   #receptionist;
   #node;
   #status;
+  #electedLeaderCallback;
+  #cache;
 
   /**
    * Get an Autoconfigured Actor System. This will be specifically useful when overriding file based config or when running in a Kubernetes Pod.
@@ -128,6 +131,7 @@ export class ActorSystem {
     this.#clusterManager = new ClusterManager(config.cluster, port, this, priority);
     this.#receptionist = new Receptionist(this.#clusterManager);
     this.#node = new Node(this, port, priority);
+    this.#cache = new ActorSystemCache(this);
 
     if (config.persistence) {
       config.persistence = Object.assign(new PersistenceConfig(), config.persistence);
@@ -157,6 +161,20 @@ export class ActorSystem {
       callback(null, self.#systemRootActor);
     });
     this.#node.startup();
+  }
+
+  whenIbecomeLeader(callback) {
+    this.#electedLeaderCallback = callback;
+  }
+
+  async iBecameLeader() {
+    if (this.#electedLeaderCallback) {
+      await this.#electedLeaderCallback();
+    }
+  }
+
+  getCache() {
+    return this.#cache;
   }
 
   getStartupTime() {

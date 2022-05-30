@@ -27,6 +27,7 @@ export class ClusterManager {
   #roundRobinHostCounter = 0;
   #inProgressSpawns = {};
   #nodeWiseInProgressSpawns = {};
+  #nodeWiseCacheSyncs = {};
 
   /**
    * Constructor. This will see if cluster is present. If it is, it will use the hosts in the cluster config.
@@ -165,6 +166,8 @@ export class ClusterManager {
               call.write(actorRef);
             });
             call.end();
+          } else {
+            this.#actorSystem.iBecameLeader();
           }
         });
         !callback && setTimeout(this.pingNodes.bind(this), this.#pingInterval * 1000);
@@ -240,7 +243,6 @@ export class ClusterManager {
       return;
     }
     var rebalanceRoundRobinHostCounter = 0;
-    // TODO Rebalance Actors in the cluster.
     var transferOrderFunctions = [];
     this.#actorSystem.setStatus(Constants.AS_STATUS_REBALANCE);
     this.#actorSystem.getReceptionist().getActors().forEach(actorRef => {
@@ -334,6 +336,21 @@ export class ClusterManager {
     }
   }
 
+  syncCache(key, value, callback) {
+    var cacheSyncFunctions = [];
+    value = JSON.stringify(value);
+    this.#hosts.forEach(host => cacheSyncFunctions.push(asyncCallback => {
+      var node = host.getIdentifier();
+      if (node !== this.#me.getIdentifier()) {
+        (!this.#nodeWiseCacheSyncs[node]) && (this.#nodeWiseCacheSyncs[node] = {});
+        this.#nodeWiseCacheSyncs[node][key] = asyncCallback;
+        var call = util.getSyncCacheCall(node, this.syncCacheCallback.bind(this), this.syncCacheErrorCallback.bind(this));
+        call.write({ key: key, value: value });
+      }
+    }));
+    cacheSyncFunctions ? async.parallel(cacheSyncFunctions, callback) : callback(null, null);
+  }
+
   async initiateLocalActorCreation(node, name, locator, behaviorDefinition, state) {
     var actorCreationRequest = { locator: locator, behaviorDefinition: behaviorDefinition };
     if (!this.#nodeWiseInProgressSpawns[node]) {
@@ -392,6 +409,24 @@ export class ClusterManager {
       logger.info('Retrying actor creation with the next host');
       this.#deleteKeysAndGetVals(node).forEach(val => nodeUtil.promisify(this.createActor).bind(this)(val.name, val.locator, val.behaviorDefinition));
     }
+  }
+
+  syncCacheCallback(syncCacheResponse, node) {
+    logger.isTraceEnabled() && logger.trace('Remote Host', node, 'Synced Cache Key:', syncCacheResponse.key);
+    this.#syncCacheActualCallback(null, node, syncCacheResponse.key);
+  }
+
+  syncCacheErrorCallback(reason, node) {
+    if (Object.keys(this.#nodeWiseCacheSyncs[node]).length > 0) {
+      logger.error('Cache Sync failed at:', node, 'with reason:', reason);
+      Object.keys(this.#nodeWiseCacheSyncs[node]).forEach(key => this.#syncCacheActualCallback(reason, node, key));
+    }
+  }
+
+  #syncCacheActualCallback(err, node, key) {
+    var callbackFunc = this.#nodeWiseCacheSyncs[node][key];
+    delete this.#nodeWiseCacheSyncs[node][key];
+    (typeof callbackFunc === 'function') && callbackFunc(err, node);
   }
 
   #deleteKeysAndGetVals(node) {
