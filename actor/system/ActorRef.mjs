@@ -142,11 +142,16 @@ export class ActorRef extends DummyActorRef {
     }
   }
 
-  async ask(messageType, message, prioritize, callback) {
+  async ask(messageType, message, timeout, prioritize, callback) {
     if (typeof prioritize === 'function') {
       callback = prioritize;
       prioritize = false;
     }
+    if (typeof timeout === 'function') {
+      callback = timeout;
+      timeout = undefined;
+    }
+    timeout = timeout ?? process.env.JSAM_ASK_TIMEOUT;
     if (!callback) {
       throw new QueueingException('callback is needed for ask requests.');
     }
@@ -161,9 +166,13 @@ export class ActorRef extends DummyActorRef {
     var retryKey = this.locator + messageType + message + Constants.ACTION_TYPES.ASK;
     try {
       var client = util.getClient(this.host.getIdentifier());
-      var response = await nodeUtil.promisify(client.enqueue).bind(client)({ locator: this.locator, messageType: messageType, message: message, prioritize: prioritize, actionType: Constants.ACTION_TYPES.ASK });
+      var deadlineOpts = undefined;
+      if (timeout) {
+        deadlineOpts = { deadline: timeout };
+      }
+      var response = await nodeUtil.promisify(client.enqueue).bind(client)({ locator: this.locator, messageType: messageType, message: message, prioritize: prioritize, actionType: Constants.ACTION_TYPES.ASK }, deadlineOpts);
       // callback if there's a callback. That will be there if it's an ask call and not a tell call.
-      messageType === Constants.TRANSFER_REQUEST_MSG_TYPE && logger.error('Transfer ask response:', response);
+      messageType === Constants.TRANSFER_REQUEST_MSG_TYPE && logger.info('Transfer ask response:', response);
       callback(JSON.parse(response.err), JSON.parse(response.result));
     } catch (reason) {
       if (this.#retries[retryKey] === 3) {

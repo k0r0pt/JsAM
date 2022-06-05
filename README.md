@@ -2,6 +2,8 @@
 
 # [![JsAM](JsAMLogo.png)](JsAMLogo.png)
 
+[![Build Status](https://github.com/k0r0pt/JsAM/actions/workflows/build.yml/badge.svg)](https://github.com/k0r0pt/JsAM/actions/workflows/build.yml) [![Version](https://badgen.net/npm/v/@k0r0pt/jsam?icon=npm)](https://www.npmjs.com/package/@k0r0pt/jsam) [![Monthly Downloads](https://badgen.net/npm/dm/@k0r0pt/jsam?icon=npm)](https://www.npmjs.com/package/@k0r0pt/jsam)
+
 ## Wut?
 
 JsAM is a powerful [actor model](https://en.wikipedia.org/wiki/Actor_model) framework.
@@ -24,8 +26,12 @@ JsAM currently has these features:
 * Actor Respawning - In case nodes go down
 * Cluster Rebalancing - In case nodes are added
 * [Kubernetes API](https://kubernetes.io/docs/concepts/overview/kubernetes-api/) support - So that we can deploy to Kubernetes Clusters
+* Caching - For when the same big message needs to be sent to many actors. This is helpful when number of nodes is far lesser than the number of actors the message needs to be sent to, thereby saving time spent on network transfers.
+* Ask Timeouts - Optional timeouts on ask operations can be specified with enviornment variable `JSAM_ASK_TIMEOUT` or as a parameter in the `ask` function.
 
 ### Planned features
+
+* Graceful shutdown - When receiving `SIGTERM`, nodes will tell the leader nodes (or the next in line) about all the actors and their states that will go down with them.
 
 ## How?
 

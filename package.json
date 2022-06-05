@@ -1,6 +1,6 @@
 {
   "name": "@k0r0pt/jsam",
-  "version": "0.0.4-alpha",
+  "version": "0.0.4",
   "description": "The Javascript Actor Model Framework",
   "license": "Apache-2.0",
   "author": "Sudipto Sarkar",
@@ -23,15 +23,15 @@
   ],
   "dependencies": {
     "@databases/pg": "^5.4.1",
-    "@grpc/grpc-js": "^1.6.2",
-    "@grpc/proto-loader": "^0.6.9",
+    "@grpc/grpc-js": "^1.6.7",
+    "@grpc/proto-loader": "^0.6.12",
     "@kubernetes/client-node": "^0.16.3",
     "async": "^3.2.3",
-    "body-parser": "^1.19.2",
+    "body-parser": "^1.20.0",
     "express": "^4.17.3",
-    "ip": "^1.1.5",
+    "ip": "^1.1.8",
     "jslint": "^0.12.1",
-    "log4js": "^6.4.4",
-    "swagger-autogen": "^2.20.8"
+    "log4js": "^6.5.2",
+    "swagger-autogen": "^2.21.2"
   }
 }

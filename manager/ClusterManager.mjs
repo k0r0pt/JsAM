@@ -116,6 +116,8 @@ export class ClusterManager {
 
   /**
    * Pings Nodes every second to see if they're up. If a node is down, removes it and initiates a new leader election.
+   *
+   * @param {Function} callback The callback function
    */
   async pingNodes(callback) {
     var pingFunctions = [];
@@ -341,12 +343,13 @@ export class ClusterManager {
     value = JSON.stringify(value);
     this.#hosts.forEach(host => cacheSyncFunctions.push(asyncCallback => {
       var node = host.getIdentifier();
-      if (node !== this.#me.getIdentifier()) {
-        (!this.#nodeWiseCacheSyncs[node]) && (this.#nodeWiseCacheSyncs[node] = {});
-        this.#nodeWiseCacheSyncs[node][key] = asyncCallback;
-        var call = util.getSyncCacheCall(node, this.syncCacheCallback.bind(this), this.syncCacheErrorCallback.bind(this));
-        call.write({ key: key, value: value });
+      if (node === this.#me.getIdentifier()) {
+        return asyncCallback(null, this.#me.getIdentifier());
       }
+      (!this.#nodeWiseCacheSyncs[node]) && (this.#nodeWiseCacheSyncs[node] = {});
+      this.#nodeWiseCacheSyncs[node][key] = asyncCallback;
+      var call = util.getSyncCacheCall(node, this.syncCacheCallback.bind(this), this.syncCacheErrorCallback.bind(this));
+      call.write({ key: key, value: value });
     }));
     cacheSyncFunctions ? async.parallel(cacheSyncFunctions, callback) : callback(null, null);
   }
