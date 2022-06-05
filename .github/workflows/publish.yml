@@ -25,6 +25,5 @@ jobs:
           tag-prefix: ""
       - name: 🚀 publish
         run: npm publish --access publish
-        working-directory: JsAM
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_AUTH_TOKEN}}
