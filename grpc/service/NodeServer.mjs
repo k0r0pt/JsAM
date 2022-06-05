@@ -154,6 +154,8 @@ export default function NodeServer(thisActorSystem, myPort) {
         "grpc-node.max_session_memory": 107374182499,
         "grpc.max_send_message_length": 1024 * 1024 * 100, // 100 MB
         "grpc.max_receive_message_length": 1024 * 1024 * 100, // 100 MB
+        "grpc.default_compression_algorithm": 2,
+        "grpc.enable_channelz": 1000
       }); // { "grpc-node.max_session_memory": 107374182400, "grpc.max_concurrent_streams": 1000000000, "grpc.enable_channelz": 1000000000 });
       var nodeService = util.getNodeService();
 

@@ -1,0 +1,30 @@
+name: "🚀 Publish"
+
+on:
+  push:
+    branches:
+      - dev
+
+jobs:
+  release:
+    name: 🚀 Publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: 📚 checkout
+        uses: actions/checkout@v3
+      - name: 🟢 node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 17.9.0
+          registry-url: https://registry.npmjs.org
+      - name: ⌛️ Build
+        run: npm ci
+      - name: "Auto Version Bump"
+        uses: "rimonhanna/gh-action-bump-version@master"
+        with:
+          tag-prefix: ""
+      - name: 🚀 publish
+        run: npm publish --access publish
+        working-directory: JsAM
+        env:
+          NODE_AUTH_TOKEN: ${{secrets.NPM_AUTH_TOKEN}}
