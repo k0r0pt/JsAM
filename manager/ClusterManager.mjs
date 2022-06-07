@@ -54,7 +54,8 @@ export class ClusterManager {
     }
     this.#me.setPriority(priority);
     this.#hosts = cluster.hosts;
-    this.#pingInterval = cluster.pingInterval ?? 10;
+    this.#pingInterval = process.env.JSAM_PING_INTERVAL ? parseInt(env.JSAM_PING_INTERVAL) : (cluster.pingInterval ?? 5);
+    process.env.JSAM_PING_INTERVAL = this.#pingInterval;
     this.#actorSystem = actorSystem;
     this.#leaderManager = new LeaderManager(this.#me, this);
   }
@@ -145,6 +146,7 @@ export class ClusterManager {
       // Let's remove the references for actors that were in the removed Node.
       // Update the Receptionist, which will also remove the dead children in the Actors.
       var deletedActors = this.#actorSystem.getReceptionist().removeHosts(downHosts);
+      deletedActors = this.#actorSystem.getReceptionist().getActorsFromNodeShutdown(deletedActors);
 
       // Respawn the dead actors if I'm the (existing or new) leader.
       this.respawnDeadActors(deletedActors);
@@ -164,9 +166,7 @@ export class ClusterManager {
                 logger.info('Synced my actors with the leader...');
               }
             });
-            this.#actorSystem.getLocalReceptionist().getLocalActorRefs().forEach(actorRef => {
-              call.write(actorRef);
-            });
+            this.#actorSystem.getLocalReceptionist().getLocalActorRefs().forEach(actorRef => call.write(actorRef));
             call.end();
           } else {
             this.#actorSystem.iBecameLeader();
@@ -223,7 +223,7 @@ export class ClusterManager {
     return asyncCallback => {
       (async () => {
         logger.debug('Recreating actor with name:', deletedActor.getName(), ', locator:', deletedActor.getLocator(), 'behaviorDefinition:', deletedActor.getBehaviorDefinition());
-        await self.createActor(deletedActor.getName(), deletedActor.getLocator(), deletedActor.getBehaviorDefinition(), asyncCallback)
+        await self.createActor(deletedActor.getName(), deletedActor.getLocator(), deletedActor.getBehaviorDefinition(), deletedActor.getState ? deletedActor.getState() : undefined, asyncCallback);
       })();
     }
   }
@@ -274,6 +274,27 @@ export class ClusterManager {
     });
   }
 
+  transferActors() {
+    var targetHost;
+    if (this.iAmLeader()) {
+      // Let's give my actors to the next in line leader.
+      targetHost = this.getLeaderManager().getNextInLineLeader();
+    } else {
+      targetHost = this.getLeaderManager().getCurrentLeader();
+    }
+    if (!targetHost) {
+      logger.warn('No node available to transfer my actors to...');
+      return;
+    }
+    // Let's tell the (new) leader what actors I have in this node.
+    var call = util.getClient(targetHost.getIdentifier()).syncActors(err => {
+      err && logger.error('Error while syncing all my actors with the leader while shutting down', err);
+      !err && logger.info('Synced my actors with the (new?) leader while shutting down...');
+    });
+    this.#actorSystem.getLocalReceptionist().getLocalActorRefs().forEach(actorRef => call.write(actorRef));
+    call.end();
+  }
+
   async transferActor(actor, toNode, callback) {
     if (actor.getHost().getIdentifier() === toNode) {
       // In case I'm asked to transfer my actor to myself, do nothing. Duh!
@@ -285,7 +306,11 @@ export class ClusterManager {
     this.initiateLocalActorCreation(toNode, actor.getName(), actor.getLocator(), actor.getBehaviorDefinition(), actor.getState());
   }
 
-  async createActor(name, locator, behaviorDefinition, callback) {
+  async createActor(name, locator, behaviorDefinition, state, callback) {
+    if (typeof state === 'function') {
+      callback = state;
+      state = undefined;
+    }
     var existingActor = this.#actorSystem.getLocalReceptionist().lookup(locator) ?? this.#actorSystem.getReceptionist().lookup(locator);
     if (existingActor) {
       callback(null, existingActor);
@@ -299,7 +324,7 @@ export class ClusterManager {
       return;
     }
 
-    this.#doCreateActor(name, locator, behaviorDefinition);
+    this.#doCreateActor(name, locator, behaviorDefinition, state);
   }
 
   async #registerActorCreationCallback(locator, callback) {
@@ -310,9 +335,9 @@ export class ClusterManager {
     this.#inProgressSpawns[locator].push(callback);
   }
 
-  async #doCreateActor(name, locator, behaviorDefinition) {
+  async #doCreateActor(name, locator, behaviorDefinition, state) {
     if (this.iAmLeader()) {
-      this.#createActorAsLeader(name, locator, behaviorDefinition);
+      this.#createActorAsLeader(name, locator, behaviorDefinition, state);
     } else {
       // Let's ask the Leader to create it.
       this.#askLeaderToCreateActor(name, locator, behaviorDefinition);
@@ -325,15 +350,15 @@ export class ClusterManager {
     this.#notifyNodesOfActorCreation(err, createdActor);
   }
 
-  async #createActorAsLeader(name, locator, behaviorDefinition) {
+  async #createActorAsLeader(name, locator, behaviorDefinition, state) {
     var createdActor = this.#actorSystem.getLocalReceptionist().lookup(locator) ?? this.#actorSystem.getReceptionist().lookup(locator);
     if (!createdActor) {
       var actorHost = this.#hosts[this.#roundRobinHostCounter++ % this.#hosts.length];
       if (this.#me === actorHost) {
-        createdActor = await this.createLocalActor(name, locator, behaviorDefinition);
+        createdActor = await this.createLocalActor(name, locator, behaviorDefinition, state);
         this.actorCreationCallback(null, createdActor);
       } else {
-        this.initiateLocalActorCreation(actorHost.getIdentifier(), name, locator, behaviorDefinition);
+        this.initiateLocalActorCreation(actorHost.getIdentifier(), name, locator, behaviorDefinition, state);
       }
     }
   }
@@ -360,7 +385,7 @@ export class ClusterManager {
       this.#nodeWiseInProgressSpawns[node] = new Map();
     }
     logger.isTraceEnabled() && logger.trace('Asking', node, 'to create', locator);
-    this.#nodeWiseInProgressSpawns[node].set(JSON.stringify(actorCreationRequest), Object.assign({ name: name }, actorCreationRequest));
+    this.#nodeWiseInProgressSpawns[node].set(JSON.stringify(actorCreationRequest), Object.assign({ name: name }, actorCreationRequest, { state: JSON.stringify(state) }));
     if (node !== this.#me.getIdentifier()) {
       var call = util.getCreateLocalActorCall(node, this.createLocalActorCallback.bind(this), this.createLocalActorErrorCallback.bind(this));
       call.write(Object.assign(actorCreationRequest, { state: JSON.stringify(state) }));
@@ -410,7 +435,7 @@ export class ClusterManager {
     if (this.#nodeWiseInProgressSpawns[node].size > 0) {
       logger.error('Actor creation failed at:', node, 'with reason:', reason);
       logger.info('Retrying actor creation with the next host');
-      this.#deleteKeysAndGetVals(node).forEach(val => nodeUtil.promisify(this.createActor).bind(this)(val.name, val.locator, val.behaviorDefinition));
+      this.#deleteKeysAndGetVals(node).forEach(val => nodeUtil.promisify(this.createActor).bind(this)(val.name, val.locator, val.behaviorDefinition, val.state));
     }
   }
 

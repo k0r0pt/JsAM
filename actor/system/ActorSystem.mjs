@@ -67,6 +67,7 @@ function getPort(port) {
 
 const layout = { type: 'pattern' }
 var logger;
+var actorSystem;
 
 export class ActorSystem {
 
@@ -132,18 +133,22 @@ export class ActorSystem {
     this.#receptionist = new Receptionist(this.#clusterManager);
     this.#node = new Node(this, port, priority);
     this.#cache = new ActorSystemCache(this);
+    process.env.OP_RETRY_INTERVAL = process.env.OP_RETRY_INTERVAL ? parseInt(process.env.OP_RETRY_INTERVAL) : (config.opRetryInterval ?? 10);
 
     if (config.persistence) {
       config.persistence = Object.assign(new PersistenceConfig(), config.persistence);
       config.persistence.init();
     }
     config.startup = config.startup ? config.startup : {};
-    config.startup.startupTime = (process.env.STARTUP_TIME ? parseInt(process.env.STARTUP_TIME) : config.startup.startupTime ?? 1);
+    config.startup.startupTime = process.env.STARTUP_TIME ? parseInt(process.env.STARTUP_TIME) : (config.startup.startupTime ?? 1);
     this.#clusterManager.waitForIt(config.startup.startupTime);
     process.on('uncaughtException', err => {
       logger.error('Going down because of an Uncaught Exception in Actor System!', err)
       process.exit(255);
     });
+    process.on('SIGTERM', this.#gracefulShutdown);
+    process.on('SIGINT', this.#gracefulShutdown);
+    actorSystem = this;
   }
 
   /**
@@ -220,5 +225,17 @@ export class ActorSystem {
 
   shutdown() {
     this.#node.shutdown();
+  }
+
+  #gracefulShutdown(code) {
+    logger.info('Received interrupt:', code);
+    logger.info('Shutting down gracefully...');
+    actorSystem.getClusterManager().transferActors();
+    // Wait 10 seconds for the actor transfers to complete
+    setTimeout(() => {
+      actorSystem.shutdown();
+      logger.info('Shutdown successful');
+      process.exit(0);
+    }, 10000);
   }
 }

@@ -13,6 +13,14 @@ service NodeService {
   rpc Ping (PingMsg) returns (PingMsg) {};
   rpc Election(ElectionMsg) returns (ElectionMsg) {};
   rpc SyncCache(stream SyncCacheRequest) returns (stream SyncCacheResponse) {};
+  rpc SyncActors(stream Actor) returns (google.protobuf.Empty) {};
+}
+
+message Actor {
+  string name = 1;
+  string locator = 2;
+  string behaviorDefinition = 3;
+  string state = 4;
 }
 
 message CreateActorRequest {
