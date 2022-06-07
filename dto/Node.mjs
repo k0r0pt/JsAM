@@ -14,7 +14,8 @@ export class Node {
   #actorSystem;
   #port;
   #priority;
-  #nodeServer;
+  #nodeHttpServer;
+  #nodeGrpcServer;
   #nodeDetails;
 
   constructor(actorSystem, port, priority) {
@@ -24,19 +25,19 @@ export class Node {
   }
 
   startup() {
-    this.#nodeServer = express();
-    this.#nodeServer.on('connection', socket => {
+    var expressServer = express();
+    expressServer.on('connection', socket => {
       logger.isDebugEnabled() && logger.debug('Setting timeout to 5 minutes.');
       socket.setTimeout(300 * 1000)
     });
-    this.#nodeServer.use(bodyParser.urlencoded({ extended: false }));
-    this.#nodeServer.use(bodyParser.json());
+    expressServer.use(bodyParser.urlencoded({ extended: false }));
+    expressServer.use(bodyParser.json());
     this.#nodeDetails = new NodeDetails(randomUUID(), ip.address(), this.#port, this.#priority);
-    clusterController(this.#nodeServer, this.#actorSystem, this.#nodeDetails);
+    clusterController(expressServer, this.#actorSystem, this.#nodeDetails);
     logger.info('Management Server Listening on', this.#port + 1);
-    var nodeServer = NodeServer(this.#actorSystem, this.#port);
-    nodeServer.init();
-    this.#nodeServer.listen(this.#port + 1, () => logger.info('Node Server Listening on', this.#port));
+    this.#nodeGrpcServer = NodeServer(this.#actorSystem, this.#port);
+    this.#nodeGrpcServer.init();
+    this.#nodeHttpServer = expressServer.listen(this.#port + 1, () => logger.info('Node Server Listening on', this.#port));
   }
 
   getNodeDetails() {
@@ -44,6 +45,7 @@ export class Node {
   }
 
   shutdown() {
-    this.#nodeServer.close(() => logger.debug('Server shutdown successfully!'));
+    this.#nodeHttpServer.close(() => logger.debug('Server shutdown successfully!'));
+    this.#nodeGrpcServer.shutdown();
   }
 }

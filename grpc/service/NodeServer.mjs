@@ -4,9 +4,11 @@ import { Message } from '../../dto/Message.mjs';
 import getUtilInstance from '../../util/Util.mjs';
 import log4js from 'log4js';
 import { Constants } from '../../constants/Constants.mjs';
+import { RespawnableActor } from '../../dto/RespawnableActor.mjs';
 
 const util = getUtilInstance();
 const logger = log4js.getLogger('NodeServer');
+var server;
 
 export default function NodeServer(thisActorSystem, myPort) {
   return {
@@ -18,8 +20,9 @@ export default function NodeServer(thisActorSystem, myPort) {
         var locatorParts = locator.split('/');
         var actorName = locatorParts[locatorParts.length - 1];
         var behaviorDefinition = request.behaviorDefinition;
+        var state = request.state;
         var clusterManager = thisActorSystem.getClusterManager();
-        clusterManager.createActor(actorName, locator, behaviorDefinition, (_err, createdActor) => {
+        clusterManager.createActor(actorName, locator, behaviorDefinition, state, (_err, createdActor) => {
           logger.isTraceEnabled() && logger.trace('Actor Created as Leader', createdActor.getName());
           call.write({ actorUrl: createdActor.getActorUrl(), locator: createdActor.getLocator(), behaviorDefinition: createdActor.getBehaviorDefinition(), name: createdActor.getName() });
         });
@@ -99,6 +102,16 @@ export default function NodeServer(thisActorSystem, myPort) {
       }
     },
 
+    syncActors: function (call) {
+      call.on('data', request => {
+        thisActorSystem.getReceptionist().logRecreationActor(new RespawnableActor(request));
+      });
+
+      call.on('end', () => {
+        logger.error('Stream ended for syncActors...');
+      });
+    },
+
     syncRegistrations: function (call) {
       call.on('data', request => {
         thisActorSystem.getReceptionist().registerRemoteActor(new ActorRef(thisActorSystem, request.name, request.locator, request.actorUrl, request.behaviorDefinition));
@@ -149,7 +162,7 @@ export default function NodeServer(thisActorSystem, myPort) {
     },
 
     init: function (local) {
-      var server = new grpc.Server({
+      server = new grpc.Server({
         "grpc.max_concurrent_streams": 4294967295,
         "grpc-node.max_session_memory": 107374182499,
         "grpc.max_send_message_length": 1024 * 1024 * 100, // 100 MB
@@ -167,16 +180,22 @@ export default function NodeServer(thisActorSystem, myPort) {
         syncRegistrations: this.syncRegistrations,
         ping: this.ping,
         election: this.election,
-        syncCache: this.syncCache
+        syncCache: this.syncCache,
+        syncActors: this.syncActors
       });
 
       if (!local) {
-        server.bindAsync('0.0.0.0'.concat(':').concat(myPort), grpc.ServerCredentials.createInsecure(), (err, result) => this.serverBindCallback(err, result, server));
+        server.bindAsync('0.0.0.0'.concat(':').concat(myPort), grpc.ServerCredentials.createInsecure(), this.serverBindCallback);
       } else {
-        server.bindAsync('unix:///tmp/jSAM.'.concat(myPort).concat('.sock'), grpc.ServerCredentials.createInsecure(), (err, result) => this.serverBindCallback(err, result, server));
+        server.bindAsync('unix:///tmp/jSAM.'.concat(myPort).concat('.sock'), grpc.ServerCredentials.createInsecure(), this.serverBindCallback);
       }
     },
 
-    serverBindCallback: (err, _result, server) => !err ? server.start() : logger.error(err)
+    serverBindCallback: (err, _result) => !err ? server.start() : logger.error(err),
+
+    shutdown: () => {
+      server.tryShutdown(() => logger.debug('Grpc server shutdown successfully'));
+      server.forceShutdown();
+    }
   }
 }

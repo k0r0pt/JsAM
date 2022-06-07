@@ -138,7 +138,7 @@ export class ActorRef extends DummyActorRef {
       this.#retries[retryKey] = this.#retries[retryKey] !== undefined ? this.#retries[retryKey] + 1 : 1;
       var self = this;
       // Backoff incrementally by a second there.
-      setTimeout(() => self.tell.bind(self)(messageType, JSON.parse(message)), this.#retries[retryKey] * 2000);
+      setTimeout(async () => self.tell.bind(self)(messageType, JSON.parse(message)), this.#retries[retryKey] * 1000 * process.env.OP_RETRY_INTERVAL);
     }
   }
 
@@ -151,7 +151,7 @@ export class ActorRef extends DummyActorRef {
       callback = timeout;
       timeout = undefined;
     }
-    timeout = timeout ?? process.env.JSAM_ASK_TIMEOUT;
+    timeout = timeout ?? (process.env.JSAM_ASK_TIMEOUT ? parseInt(process.env.JSAM_ASK_TIMEOUT) : undefined);
     if (!callback) {
       throw new QueueingException('callback is needed for ask requests.');
     }
@@ -199,7 +199,7 @@ export class ActorRef extends DummyActorRef {
       this.#retries[retryKey] = this.#retries[retryKey] !== undefined ? this.#retries[retryKey] + 1 : 1;
       var self = this;
       // Backoff incrementally by a second there.
-      setTimeout(() => self.ask.bind(self)(messageType, JSON.parse(message), prioritize, callback), this.#retries[retryKey] * 2000);
+      setTimeout(async () => self.ask.bind(self)(messageType, JSON.parse(message), prioritize, callback), this.#retries[retryKey] * 1000 * process.env.OP_RETRY_INTERVAL);
     }
   }
 

@@ -24,14 +24,13 @@ JsAM currently has these features:
 * Monitoring endpoints
 * Actor Communications through [gRPC](https://grpc.io)
 * Actor Respawning - In case nodes go down
-* Cluster Rebalancing - In case nodes are added
+* Cluster Rebalancing - In case nodes are added or removed
 * [Kubernetes API](https://kubernetes.io/docs/concepts/overview/kubernetes-api/) support - So that we can deploy to Kubernetes Clusters
 * Caching - For when the same big message needs to be sent to many actors. This is helpful when number of nodes is far lesser than the number of actors the message needs to be sent to, thereby saving time spent on network transfers.
 * Ask Timeouts - Optional timeouts on ask operations can be specified with enviornment variable `JSAM_ASK_TIMEOUT` or as a parameter in the `ask` function.
+* Graceful shutdowns - When receiving `SIGTERM` or `SIGINT`, nodes that go down will tell the leader nodes (or the next in line if the leader itself is going down) about all the actors and their states that will go down with them. The leader (or the new leader) will then recreate these actors along with their states.
 
 ### Planned features
-
-* Graceful shutdown - When receiving `SIGTERM`, nodes will tell the leader nodes (or the next in line) about all the actors and their states that will go down with them.
 
 ## How?
 

@@ -44,21 +44,33 @@ export class LeaderManager {
    * @returns The {@link Host} that is the current leader
    */
   getCurrentLeader() {
-    return this.clusterManager.getHosts().reduce((prev, current) => {
-      if (prev && prev.getPriority()) {
-        if (current && current.getPriority()) {
-          if (prev.getPriority() <= current.getPriority()) {
-            return prev;
-          } else {
-            return current;
-          }
-        } else {
-          return prev;
-        }
-      } else {
-        return current;
+    return this.#getOldestHost();
+  }
+
+  getNextInLineLeader() {
+    return this.#getOldestHost(true);
+  }
+
+  #getOldestHost(nextInLine) {
+    let leader = new Host(undefined, undefined);
+    let secondInLine = new Host(undefined, undefined);
+    leader.setPriority(Infinity);
+    secondInLine.setPriority(Infinity);
+
+    for (const host of this.clusterManager.getHosts()) {
+      const nr = host.getPriority();
+      if (!nr) {
+        continue;
       }
-    }, null);
+
+      if (nr < leader.getPriority()) {
+        [secondInLine, leader] = [leader, host] // save previous max
+      } else if (nr > leader.getPriority() && nr < secondInLine.getPriority()) {
+        secondInLine = host; // new second biggest
+      }
+    }
+
+    return nextInLine ? secondInLine : leader;
   }
 
   async checkAndUpdateLeaderStatus() {

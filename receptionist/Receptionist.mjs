@@ -1,7 +1,6 @@
 import log4js from 'log4js';
 import { Actor } from '../actor/system/Actor.mjs';
 import { ActorRef } from '../actor/system/ActorRef.mjs';
-import { Queue } from '../ds/Queue.mjs';
 import { ActorNotFoundException } from '../exception/ActorNotFoundException.mjs';
 import { ClusterManager } from '../manager/ClusterManager.mjs';
 import getUtilInstance from '../util/Util.mjs';
@@ -17,7 +16,7 @@ export class Receptionist {
    * The lookup table.
    */
   #lut = {};
-  #syncQueue = {};
+  #respawnCache = {};
 
   /**
    * Constructor.
@@ -26,7 +25,6 @@ export class Receptionist {
    */
   constructor(clusterManager) {
     this.clusterManager = clusterManager;
-    this.#syncQueue = new Queue(this);
   }
 
   lookup(locator) {
@@ -100,6 +98,20 @@ export class Receptionist {
       parent && parent.removeChild(locator);
     });
     return deletedActors;
+  }
+
+  logRecreationActor(respawnableActor) {
+    this.#respawnCache[respawnableActor.getLocator()] = respawnableActor;
+  }
+
+  getActorsFromNodeShutdown(actors) {
+    var respawnActors = [];
+    for (var actor of actors) {
+      var actorInRespawnCache = this.#respawnCache[actor.getLocator()];
+      actorInRespawnCache ? respawnActors.push(actorInRespawnCache) : respawnActors.push(actor);
+      delete this.#respawnCache[actor.getLocator()]
+    }
+    return respawnActors;
   }
 
   /**
