@@ -168,7 +168,7 @@ export class ActorRef extends DummyActorRef {
       var client = util.getClient(this.host.getIdentifier());
       var deadlineOpts = undefined;
       if (timeout) {
-        deadlineOpts = { deadline: timeout };
+        deadlineOpts = { deadline: new Date(Date.now().valueOf() + (timeout * 1000)) };
       }
       var response = await nodeUtil.promisify(client.enqueue).bind(client)({ locator: this.locator, messageType: messageType, message: message, prioritize: prioritize, actionType: Constants.ACTION_TYPES.ASK }, deadlineOpts);
       // callback if there's a callback. That will be there if it's an ask call and not a tell call.
@@ -190,7 +190,7 @@ export class ActorRef extends DummyActorRef {
         }
         if (myNewRef.actorUrl !== this.actorUrl) {
           logger.debug('I have moved... Forwarding the tell to my new reference. And then telling my parent to update my reference.', myNewRef);
-          myNewRef.ask(messageType, JSON.parse(message), prioritize, callback);
+          myNewRef.ask(messageType, JSON.parse(message), timeout, prioritize, callback);
           (await this.getParent()).updateChildRef(myNewRef);
           return;
         }
@@ -199,7 +199,7 @@ export class ActorRef extends DummyActorRef {
       this.#retries[retryKey] = this.#retries[retryKey] !== undefined ? this.#retries[retryKey] + 1 : 1;
       var self = this;
       // Backoff incrementally by a second there.
-      setTimeout(async () => self.ask.bind(self)(messageType, JSON.parse(message), prioritize, callback), this.#retries[retryKey] * 1000 * process.env.OP_RETRY_INTERVAL);
+      setTimeout(async () => self.ask.bind(self)(messageType, JSON.parse(message), timeout, prioritize, callback), this.#retries[retryKey] * 1000 * process.env.OP_RETRY_INTERVAL);
     }
   }
 
