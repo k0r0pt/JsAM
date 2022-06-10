@@ -54,7 +54,7 @@ export class ClusterManager {
     }
     this.#me.setPriority(priority);
     this.#hosts = cluster.hosts;
-    this.#pingInterval = process.env.JSAM_PING_INTERVAL ? parseInt(env.JSAM_PING_INTERVAL) : (cluster.pingInterval ?? 5);
+    this.#pingInterval = process.env.JSAM_PING_INTERVAL ? parseInt(process.env.JSAM_PING_INTERVAL) : (cluster.pingInterval ?? 5);
     process.env.JSAM_PING_INTERVAL = this.#pingInterval;
     this.#actorSystem = actorSystem;
     this.#leaderManager = new LeaderManager(this.#me, this);

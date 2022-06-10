@@ -33,7 +33,7 @@ export class Actor extends ActorRef {
       throw new Error('Actor name cannot have / in it.');
     }
     this.#queue = new Queue(this);
-    this.#state = !state ? {} : JSON.parse(state);
+    this.#state = !state || !JSON.parse(state) ? {} : JSON.parse(state);
     this.#loggingPrefix = '[' + name + '@' + actorSystem.getClusterManager().getMe().getIdentifier() + ']';
     return this.#resolveBehavior(behaviorDefinition);
   }
