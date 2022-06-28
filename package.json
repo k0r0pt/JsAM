@@ -1,6 +1,6 @@
 {
   "name": "@k0r0pt/jsam",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "description": "The Javascript Actor Model Framework",
   "license": "Apache-2.0",
   "author": "Sudipto Sarkar",
