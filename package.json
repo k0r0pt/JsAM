@@ -24,7 +24,7 @@
   "dependencies": {
     "@databases/pg": "^5.4.1",
     "@grpc/grpc-js": "^1.6.7",
-    "@grpc/proto-loader": "^0.6.13",
+    "@grpc/proto-loader": "^0.7.0",
     "@kubernetes/client-node": "^0.17.0",
     "async": "^3.2.4",
     "body-parser": "^1.20.0",
